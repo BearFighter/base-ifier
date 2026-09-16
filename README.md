@@ -76,7 +76,8 @@ explains that the account service is not available yet; nothing else changes.
 
 - `npm test` runs the geometry and UI helper tests (vitest).
 - `npm run typecheck` checks the app; `npx tsc -p electron/tsconfig.json --noEmit` checks the shell.
-- Architecture and the rules learned the hard way live in `CLAUDE.md`; research
-  behind the printing decisions is in `docs/research/`.
+- Architecture and the rules learned the hard way live in
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); research behind the printing
+  decisions is in `docs/research/`.
 - `http://localhost:5173/?autotest=1` runs a scripted performance pass in a
   real browser and writes a report to `perf-logs/`.

@@ -7,3 +7,5 @@ S - Bases/
 perf-logs/
 dist-electron/
 release/
+CLAUDE.md
+.claude/
