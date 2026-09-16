@@ -2,8 +2,10 @@ name: Release
 
 # Tag a commit v<version> (matching package.json) and push the tag:
 #   git tag v0.1.1 && git push --tags
-# This builds the Windows installer and publishes it, with latest.yml, to a
-# GitHub Release. Installed apps update themselves from that release.
+# Builds the Windows installer, the macOS dmg/zip (x64 + arm64) and the Linux
+# AppImage, one platform after another, and publishes them with their update
+# manifests to a single GitHub Release. Windows and Linux apps update
+# themselves from that release; macOS (unsigned) only links to it.
 
 on:
   push:
@@ -13,8 +15,19 @@ permissions:
   contents: write
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            flag: --win
+          - os: macos-latest
+            flag: --mac
+          - os: ubuntu-latest
+            flag: --linux
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,7 +41,11 @@ jobs:
         run: |
           v=$(node -p "require('./package.json').version")
           [ "${GITHUB_REF_NAME}" = "v${v}" ] || { echo "tag ${GITHUB_REF_NAME} != package.json v${v}"; exit 1; }
-      - name: Build and publish the installer
-        run: npm run release
+      - run: npm run build
+      - run: npm run electron:compile
+      - name: Build and publish (${{ matrix.flag }})
+        run: npx electron-builder ${{ matrix.flag }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # no certificates yet: never try to sign
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'

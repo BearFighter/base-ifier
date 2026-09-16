@@ -9,10 +9,17 @@ Community and support: [Discord](https://discord.gg/7mhYNtdmQV).
 
 ## Run it
 
-**Installed app (Windows):** download `Base-ifier-Setup-<version>.exe` from the
-[Releases](https://github.com/BearFighter/base-ifier/releases) page. The app
-checks GitHub for new versions when it starts and shows "Restart to update" in
-the bottom bar when one has been downloaded.
+**Installed app:** download from the
+[Releases](https://github.com/BearFighter/base-ifier/releases) page:
+
+- Windows: `Base-ifier-Setup-<version>.exe` (installer). Updates itself: the app
+  checks GitHub when it starts and shows "Restart to update" in the bottom bar.
+- Linux: `Base-ifier-<version>-x64.AppImage` (`chmod +x`, then run). Updates itself
+  the same way.
+- macOS: `Base-ifier-<version>-arm64.dmg` (Apple silicon) or `-x64.dmg` (Intel).
+  The build is not signed yet, so the first launch needs right-click → Open (or
+  `xattr -cr /Applications/Base-ifier.app`), and it cannot update itself: it
+  shows "Version x is out" in the bottom bar linking to the release instead.
 
 **In a browser (developers):**
 
@@ -34,23 +41,28 @@ Electron window against it.
 npm run electron:build
 ```
 
-produces `release/Base-ifier-Setup-<version>.exe` (NSIS, per-user install,
-x64). `npm run electron:smoke` builds and launches the packaged renderer once
-to check it renders, then exits.
+builds the installer for the OS you are on into `release/` (Windows: NSIS
+`.exe`; macOS: `.dmg` + `.zip` for x64 and arm64; Linux: `.AppImage`).
+`npm run electron:smoke` builds and launches the packaged renderer once to
+check it renders, then exits.
 
 ## Publish a release (and push an update to every installed copy)
 
 1. Bump `version` in `package.json` (e.g. `0.1.1`).
 2. Commit, tag and push: `git tag v0.1.1 && git push --tags`.
-3. The `Release` GitHub Actions workflow builds the installer on Windows and
-   attaches it, plus `latest.yml`, to a GitHub Release for that tag.
-4. Installed apps pick the new version up automatically on their next start
-   (electron-updater reads `latest.yml` from the latest GitHub Release); the web
-   build shows a "Version x is out" chip that links to the release.
+3. The `Release` GitHub Actions workflow builds on Windows, macOS and Linux
+   runners (one after another) and attaches every installer, plus the
+   `latest*.yml` update manifests, to one GitHub Release for that tag.
+4. Windows and Linux apps pick the new version up automatically on their next
+   start (electron-updater reads the manifests from the latest GitHub Release);
+   the mac build and the web build show a "Version x is out" chip that links to
+   the release.
 
 Releases must be public and tagged `v<version>`; the version in the tag and in
-`package.json` must match. Installers are unsigned for now, so Windows
-SmartScreen shows a warning on first install; auto-updates still work.
+`package.json` must match. Installers are unsigned for now: Windows SmartScreen
+warns on first install (auto-updates still work) and macOS needs the
+right-click → Open dance and cannot self-update until the app is signed and
+notarised with an Apple Developer ID.
 
 ## Account sign-in
 

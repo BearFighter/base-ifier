@@ -35,8 +35,11 @@ export const useUpdateStore = create<UpdateStore>()((set) => ({
     const d = getDesktop();
     if (d) {
       const s = await d.checkForUpdates();
-      set({ ...s });
-      return;
+      // a build that cannot self-update (unsigned macOS) still gets told about new releases
+      if (s.state !== 'unsupported') {
+        set({ ...s });
+        return;
+      }
     }
     try {
       const r = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, { headers: { Accept: 'application/vnd.github+json' } });

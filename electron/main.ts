@@ -27,7 +27,8 @@ const SMOKE = process.argv.includes('--smoke');
 let win: BrowserWindow | null = null;
 
 export interface UpdateState {
-  state: 'dev' | 'checking' | 'none' | 'available' | 'downloading' | 'ready' | 'error';
+  /** 'unsupported': this platform build cannot self-update (unsigned macOS); the renderer falls back to a release link */
+  state: 'dev' | 'unsupported' | 'checking' | 'none' | 'available' | 'downloading' | 'ready' | 'error';
   version?: string;
   percent?: number;
   message?: string;
@@ -110,8 +111,16 @@ function createWindow(): void {
   win.on('closed', () => { win = null; });
 }
 
+/**
+ * Self-update works for the Windows installer and the Linux AppImage. macOS
+ * refuses to apply updates to unsigned apps (Squirrel.Mac needs a Developer ID
+ * signature), so until the app is signed and notarised the mac build only
+ * points at the release page.
+ */
+const CAN_SELF_UPDATE = app.isPackaged && process.platform !== 'darwin';
+
 function setupUpdates(): void {
-  if (!app.isPackaged) return;
+  if (!CAN_SELF_UPDATE) return;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.on('checking-for-update', () => sendUpdate({ state: 'checking' }));
@@ -130,6 +139,7 @@ ipcMain.handle('shell:openExternal', (_e, url: unknown) => {
 });
 ipcMain.handle('updates:check', async (): Promise<UpdateState> => {
   if (!app.isPackaged) return { state: 'dev' };
+  if (!CAN_SELF_UPDATE) return { state: 'unsupported' };
   try {
     const r = await autoUpdater.checkForUpdates();
     const v = r?.updateInfo?.version;
@@ -140,13 +150,16 @@ ipcMain.handle('updates:check', async (): Promise<UpdateState> => {
   }
 });
 ipcMain.handle('updates:install', () => {
-  if (app.isPackaged) autoUpdater.quitAndInstall();
+  if (CAN_SELF_UPDATE) autoUpdater.quitAndInstall();
 });
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
+    ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
     { label: 'File', submenu: [{ role: 'reload' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
     { label: 'View', submenu: [{ role: 'toggleDevTools' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
+    { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }, ...(process.platform === 'darwin' ? [{ type: 'separator' as const }, { role: 'front' as const }] : [{ role: 'close' as const }])] },
   ]));
   serveDist();
   createWindow();

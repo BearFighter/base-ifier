@@ -29,8 +29,8 @@ export function StatusLinks() {
   useEffect(() => {
     const off = update.listen();
     void auth.restore();
-    // the desktop shell checks by itself after start; browsers ask GitHub once
-    if (!isDesktop()) void update.check();
+    // Windows/Linux shells check by themselves after start; browsers and the mac build ask GitHub once
+    void update.check();
     return off;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -39,7 +39,7 @@ export function StatusLinks() {
   let updateChip: { text: string; title: string; onClick: () => void; cls: string } | null = null;
   switch (update.state) {
     case 'available':
-      updateChip = isDesktop()
+      updateChip = isDesktop() && !update.url
         ? { text: `Update ${update.version} downloading…`, title: 'A new version is on its way', onClick: () => {}, cls: 'update' }
         : { text: `Version ${update.version} is out`, title: 'Open the download page', onClick: () => openExternal(update.url ?? GITHUB_RELEASES_URL), cls: 'update' };
       break;

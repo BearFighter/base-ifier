@@ -13,8 +13,8 @@
     "electron:compile": "tsc -p electron/tsconfig.json && node -e \"require('fs').copyFileSync('electron/preload.cjs','dist-electron/preload.cjs')\"",
     "electron:dev": "concurrently -k -n vite,electron \"vite\" \"wait-on http://localhost:5173 && npm run electron:compile && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "electron:smoke": "npm run build && npm run electron:compile && electron . --smoke",
-    "electron:build": "npm run build && npm run electron:compile && electron-builder --win --publish never",
-    "release": "npm run build && npm run electron:compile && electron-builder --win --publish always"
+    "electron:build": "npm run build && npm run electron:compile && electron-builder --publish never",
+    "release": "npm run build && npm run electron:compile && electron-builder --publish always"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.8",
@@ -94,6 +94,48 @@
         "repo": "base-ifier",
         "releaseType": "release"
       }
-    ]
+    ],
+    "mac": {
+      "category": "public.app-category.graphics-design",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "writeUpdateInfo": false
+    },
+    "linux": {
+      "category": "Graphics",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "maintainer": "Bit Death Labs",
+      "synopsis": "Cut sculpted wargaming bases into printable base sizes"
+    }
   }
 }

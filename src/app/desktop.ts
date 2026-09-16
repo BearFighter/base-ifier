@@ -3,7 +3,7 @@
  * (see electron/preload.cjs). In a plain browser every call has a fallback.
  */
 export interface UpdateState {
-  state: 'idle' | 'dev' | 'checking' | 'none' | 'available' | 'downloading' | 'ready' | 'error';
+  state: 'idle' | 'dev' | 'unsupported' | 'checking' | 'none' | 'available' | 'downloading' | 'ready' | 'error';
   version?: string;
   percent?: number;
   message?: string;
