@@ -39,7 +39,7 @@ const flatNoise = (amp: number, scale: number, ridged = 0): GroundRecipe['noise'
 export const GENRE_PRESETS: GenrePreset[] = [
   {
     id: 'temple-ruins', label: 'Temple ruins', world: 'fantasy',
-    help: 'Cracked flagstones, broken columns and a little rubble; one fallen piece as the centrepiece.',
+    help: 'Cracked flagstones, broken columns and a little rubble; one fallen column as the centrepiece.',
     ground: { noise: flatNoise(0.5, 12), tiles: [{ stamp: 'cracks', strength: -0.35, size: 40 }], reliefCap: 1.5 },
     families: [{ family: 'ruin', weight: 3 }, { family: 'debris', weight: 2 }, { family: 'rock', weight: 1 }],
     density: 'medium', heightCap: 12,
@@ -102,7 +102,7 @@ export const GENRE_PRESETS: GenrePreset[] = [
   },
   {
     id: 'scifi-hive', label: 'Sci-fi hive rubble', world: 'scifi',
-    help: 'Collapsed hive city: concrete slabs, twisted rebar, cable snarls, tech debris.',
+    help: 'Collapsed hive city: broken concrete, twisted rebar, cable snarls, tech debris.',
     ground: { noise: flatNoise(1.5, 8, 0.4), tiles: [{ stamp: 'cracks', strength: -0.4, size: 28 }], reliefCap: 3 },
     families: [{ family: 'debris', weight: 4 }, { family: 'scifi', weight: 3 }],
     density: 'heavy', heightCap: 12,
@@ -122,8 +122,8 @@ export const GENRE_PRESETS: GenrePreset[] = [
     density: 'medium', heightCap: 14,
   },
   {
-    id: 'lunar', label: 'Lunar regolith', world: 'scifi',
-    help: 'Fine regolith with crater rims and a few boulders; nothing grows here.',
+    id: 'lunar', label: 'Moon dust', world: 'scifi',
+    help: 'Fine dust with crater edges and a few boulders; nothing grows here.',
     ground: { noise: flatNoise(0.7, 11), scatterStamps: [{ stamp: 'craters', strength: 0.9, size: [10, 22], per100cm2: 2 }], reliefCap: 2 },
     families: [{ family: 'rock', weight: 4 }, { family: 'scifi', weight: 1 }],
     density: 'light', heightCap: 8,

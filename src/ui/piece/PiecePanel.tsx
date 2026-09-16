@@ -135,7 +135,7 @@ export function PiecePanel() {
   if (!piece) {
     return (
       <div className="panel piece-panel">
-        <div className="panel-title">Piece</div>
+        <div className="panel-title">Base</div>
         <div className="panel-empty">Nothing selected. Click a base in the list on the left or on the view.</div>
       </div>
     );
@@ -156,7 +156,7 @@ export function PiecePanel() {
 
   return (
     <div className="panel piece-panel">
-      <div className="panel-title">Piece</div>
+      <div className="panel-title">Base</div>
 
       <input
         className="piece-title-input"

@@ -139,8 +139,13 @@
 /* the r3f host inside .studio-viewport: absolute so it has a definite size to measure */
 .studio-canvas-host { position: absolute; inset: 0; }
 .studio-viewport canvas { display: block; }
-.studio-hud { position: absolute; top: 8px; left: 8px; display: flex; gap: 6px; z-index: 2; }
-.studio-hud button { font-size: 12px; padding: 4px 9px; }
+.studio-hud { position: absolute; top: 8px; left: 8px; display: flex; flex-wrap: wrap; gap: 6px; z-index: 2; max-width: calc(100% - 16px); }
+.studio-hud button { font-size: 12px; padding: 4px 9px; white-space: nowrap; }
+/* the studio's bottom bar: the status line takes the slack so the big button never gets pushed off */
+.studio-bar .status { flex: 1 1 auto; min-width: 0; font-size: 12px; line-height: 1.35; }
+/* "the props were just placed again" — the one place the user looks for what happened */
+.studio-notice { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.studio-notice .notice-undo { font-size: 12px; padding: 3px 10px; cursor: pointer; }
 .studio-warn { position: absolute; bottom: 8px; left: 8px; right: 8px; font-size: 12px; color: #ffd08a; background: rgba(0, 0, 0, 0.45); padding: 4px 8px; border-radius: 6px; pointer-events: none; }
 .studio-tabs { display: flex; gap: 4px; padding: 8px 10px 0; }
 .studio-tabs button { flex: 1; font-size: 13px; padding: 6px 4px; }

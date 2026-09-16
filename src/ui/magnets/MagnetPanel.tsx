@@ -214,7 +214,7 @@ export function MagnetPanel() {
   return (
     <div className="panel magnet-panel">
       <div className="panel-title">3 · Magnets (optional)</div>
-      <div className="panel-subtitle">Settings for every piece. Pieces with slots that no longer fit show a ⚠ in the Pieces list.</div>
+      <div className="panel-subtitle">Settings for every base. Bases with slots that no longer fit show a ⚠ in the list on the left.</div>
       <UndersideSection />
 
       <Hint>Magnets sit under every base so it sticks to a steel sheet or movement tray. Placed automatically; you rarely need to touch this.</Hint>
@@ -302,7 +302,7 @@ export function MagnetPanel() {
         <Field
           label="Minimum material beside the slot"
           unit="mm"
-          help="Distance kept between a slot and the edge of the piece."
+          help="Distance kept between a slot and the edge of the base."
         >
           <input
             type="number"

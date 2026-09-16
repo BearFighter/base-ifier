@@ -57,10 +57,10 @@ function BoardPanel() {
   const current = BOARD_PRESETS.find((b) => b.shape.kind === shape.kind && b.shape.w === shape.w && b.shape.d === shape.d)?.id ?? 'custom';
   return (
     <div className="studio-panel">
-      <Field label="Scene name" help="Shows up in the Scene tab once the scene is handed to the cutter.">
+      <Field label="Scene name" help="Shows up in the Scene tab once the scene is handed over to be cut into bases.">
         <input type="text" value={doc.name} onChange={(e) => update((d) => { d.name = e.target.value; }, { history: false })} />
       </Field>
-      <Field label="Board" help="The slab you will cut bases from. Pick a single base to make one topper, a unit footprint for a multibase, or a slab or board to cut many bases from.">
+      <Field label="Board" help="Pick the size of ground to build. A single base size cuts out one base; a unit size (the same unit frame you place on the Bases screen) cuts out a group; a bigger rectangle lets you cut several separate bases from one scene.">
         <select value={current} onChange={(e) => { const p = BOARD_PRESETS.find((b) => b.id === e.target.value); if (p) update((d) => { d.board.shape = { ...p.shape }; d.board.margin = boardMargin(p); }); }}>
           {groups.map((g) => (
             <optgroup key={g} label={g}>
@@ -78,19 +78,20 @@ function BoardPanel() {
           <input type="number" min={10} max={1000} step={1} value={shape.d} onChange={(e) => update((d) => { d.board.shape.d = Math.max(10, Math.min(1000, Number(e.target.value) || 10)); })} />
         </Field>
       </div>
-      <Field label="Shape" help="Round boards are ovals; everything else is a rectangle with the usual slight bevel.">
+      <Field label="Shape" help="Round boards come out as ovals; everything else is a rectangle whose sides lean in very slightly, like a shop-bought base.">
         <select value={shape.kind} onChange={(e) => update((d) => { d.board.shape.kind = e.target.value as 'rect' | 'ellipse'; })}>
           <option value="rect">Rectangle</option>
           <option value="ellipse">Round / oval</option>
         </select>
       </Field>
-      <Field label="Room around it" unit="mm" help="Single bases and unit footprints are cut OUT of the scene, so the board is built this much bigger on every side and nothing is scattered on that strip. Slabs you cut many bases from need none.">
+      <Field label="Room around it" unit="mm" help="Single bases and unit sizes get this much spare ground on every side, so the cut edge comes out clean. Leave it at 0 for a big board you are cutting many bases from.">
         <input type="number" min={0} max={10} step={0.5} value={doc.board.margin ?? 0} onChange={(e) => update((d) => { d.board.margin = Math.max(0, Math.min(10, Number(e.target.value) || 0)); })} />
       </Field>
       <Hint>
         {(doc.board.margin ?? 0) > 0
-          ? `The board is ${shape.w + 2 * (doc.board.margin ?? 0)} × ${shape.d + 2 * (doc.board.margin ?? 0)} mm: your ${shape.w} × ${shape.d} plus ${doc.board.margin} mm all round. Back in the cutter, place a ${shape.w} × ${shape.d} base or frame on it and Base-ify.`
-          : `Bases are cut from inside this ${shape.w} × ${shape.d} mm slab. The plate under the ground is ${doc.board.plateTop} mm thick, and every cut base gets the same rim, hollow underside and magnets as one cut from an STL.`}
+          ? `The board is ${shape.w + 2 * (doc.board.margin ?? 0)} × ${shape.d + 2 * (doc.board.margin ?? 0)} mm: your ${shape.w} × ${shape.d} plus ${doc.board.margin} mm all round. Back on the Bases screen, place a ${shape.w} × ${shape.d} base or frame on it and press Base-ify.`
+          : `Bases are cut from inside this ${shape.w} × ${shape.d} mm board. The plate under the ground is ${doc.board.plateTop} mm thick, and every cut base gets the same edge, hollow underside and magnets as one cut from an STL.`}
+        {' '}Change the size and your props are placed again to fit — Undo puts them back.
       </Hint>
     </div>
   );
@@ -110,7 +111,7 @@ function GroundPanel() {
   ];
   return (
     <div className="studio-panel">
-      <Section title="Ground" subtitle={preset.help}>
+      <Section title="Ground style" subtitle={`Pick the look of the ground. Right now: ${preset.label} — ${preset.help.charAt(0).toLowerCase()}${preset.help.slice(1)}`}>
         {worlds.map((w) => {
           const items = GENRE_PRESETS.filter((p) => p.world === w.id);
           if (items.length === 0) return null;
@@ -129,20 +130,20 @@ function GroundPanel() {
           );
         })}
       </Section>
-      <Field label="Roughness" help="How much the ground rises and falls. 1 is the preset's own look.">
+      <Field label="Roughness" help="How much the ground rises and falls. 1× is this style's own look; less is flatter, more is more rugged.">
         <RangeRow value={doc.ground.roughness} min={0.3} max={2} step={0.05} onChange={(v) => update((d) => { d.ground.roughness = v; })} format={(v) => v.toFixed(2) + '×'} />
       </Field>
       <Field label="Texture" help="Strength of the surface pattern (flagstones, plating, ripples). 0 turns it off.">
         <RangeRow value={doc.ground.texture} min={0} max={2} step={0.05} onChange={(v) => update((d) => { d.ground.texture = v; })} format={(v) => v.toFixed(2) + '×'} />
       </Field>
       <div className="button-row">
-        <button type="button" onClick={() => update((d) => { d.ground.seed = (d.ground.seed * 1664525 + 1013904223) >>> 0; })} title="Keep the settings, draw new ground">
-          New ground
+        <button type="button" onClick={() => update((d) => { d.ground.seed = (d.ground.seed * 1664525 + 1013904223) >>> 0; })} title="Keeps all your other settings and draws the ground again with a new random pattern.">
+          Try a different layout
         </button>
-        <span className="muted">seed {doc.ground.seed}</span>
       </div>
+      <Hint>Keeps all your other settings and draws the ground again with a new random pattern.</Hint>
       <Details summary={`Extra patterns (${doc.ground.stamps.length})`}>
-        <Hint>Stamp a pattern onto one spot. Each one sits at the centre until you set its position.</Hint>
+        <Hint>Presses one pattern into a single spot on the ground. Each one starts in the middle until you give it a position.</Hint>
         <div className="button-row">
           <select id="studio-stamp-pick" defaultValue="cobbles">
             {STAMP_CHOICES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
@@ -170,9 +171,16 @@ function GroundPanel() {
       </Details>
       {doc.ground.strokes.length > 0 && (
         <div className="button-row">
-          <button type="button" onClick={() => update((d) => { d.ground.strokes = []; })}>Clear painted changes ({doc.ground.strokes.length})</button>
+          <button type="button" title="Undoes every change you painted on the ground by hand" onClick={() => update((d) => { d.ground.strokes = []; })}>Clear painted changes ({doc.ground.strokes.length})</button>
         </div>
       )}
+      <Details summary="Technical details">
+        <div className="field-row">
+          <span>Pattern number</span>
+          <span>{doc.ground.seed}</span>
+        </div>
+        <Hint>The number the random pattern is drawn from. Two scenes with the same number and the same settings come out identical. “Try a different layout” picks a new one.</Hint>
+      </Details>
     </div>
   );
 }
@@ -187,6 +195,7 @@ const FAMILY_CHOICES: { id: PropFamily | 'any'; label: string }[] = [
   { id: 'alien', label: 'Alien' },
   { id: 'wood', label: 'Wood' },
   { id: 'bone', label: 'Bone' },
+  { id: 'ground', label: 'Ground cover' },
   { id: 'any', label: 'Any' },
 ];
 
@@ -200,7 +209,12 @@ const LICENCE_CHOICES: { id: LicenceTag; label: string }[] = [
   { id: 'unknown', label: 'Unknown' },
 ];
 
-const FAMILY_HELP = 'Genre presets pick props by family; Any is picked by every preset';
+/** The Family select's own words, so a hint never shows the raw stored value. */
+function familyLabel(f: PropFamily | 'any'): string {
+  return (FAMILY_CHOICES.find((c) => c.id === f)?.label ?? f).toLowerCase();
+}
+
+const FAMILY_HELP = 'What kind of thing this is. Each ground style asks for certain kinds — rocks on snow, ruins in temple ruins, ground cover in a swamp — and anything marked Any can turn up on all of them';
 const LICENCE_HELP = 'Only matters for the commercial, watermark-free export; ordinary exports are watermarked either way';
 const WEIGHT_HELP = 'How often it is picked compared with the others';
 
@@ -238,7 +252,7 @@ function LibraryRow({ id }: { id: string }) {
       </div>
       <div className="lib-meta">
         {info && info.closed
-          ? `footprint ${mm(info.footprintRadius * 2)} mm · ${mm(info.height)} mm tall · ${tris(info.tris)}`
+          ? `${mm(info.footprintRadius * 2)} mm across · ${mm(info.height)} mm tall · ${tris(info.tris)}`
           : `${item.fileName} · ${Math.max(1, Math.round(item.fileSize / 1024))} KB`}
         {used > 0 ? ` · ${used} on the board` : ''}
       </div>
@@ -305,7 +319,6 @@ function PropsPanel() {
   const registerLibraryFiles = useStudioStore((s) => s.registerLibraryFiles);
   const libraryBusy = useStudioStore((s) => s.libraryBusy);
   const assetInfo = useStudioStore((s) => s.assetInfo);
-  const preview = useStudioStore((s) => s.preview);
   const scattered = doc.props.filter((p) => p.scattered).length;
   const placed = doc.props.filter((p) => !p.scattered);
   const preset = genrePreset(doc.ground.presetId);
@@ -342,7 +355,7 @@ function PropsPanel() {
         {doc.library.length === 0 && <div className="muted">No props yet. Add your own STLs — a rock, a skull, a broken column — and they are scattered over the generated ground.</div>}
       </Section>
 
-      <Section title="Scatter" subtitle="Strews your props over the ground, keeping off the rim and any foot zones.">
+      <Section title="Scatter" subtitle="Strews your props over the ground, keeping clear of the edge and any flat spots you have marked for models.">
         <Field label="How much" help="Light leaves room for models; heavy is a rubble field. Small boards get proportionally less.">
           <select value={doc.rules.density} onChange={(e) => update((d) => { d.rules.density = e.target.value as 'light' | 'medium' | 'heavy'; })}>
             <option value="light">Light</option>
@@ -350,27 +363,27 @@ function PropsPanel() {
             <option value="heavy">Heavy</option>
           </select>
         </Field>
-        <Field label="Centrepiece" help="One larger prop at a rule-of-thirds point on boards 40 mm and up.">
+        <Field label="Centrepiece" help="One larger prop placed off-centre so it draws the eye, on boards 40 mm and bigger.">
           <input type="checkbox" checked={doc.rules.heroProps} onChange={(e) => update((d) => { d.rules.heroProps = e.target.checked; })} />
         </Field>
         <div className="button-row">
-          <button type="button" className="primary" onClick={() => void scatter(true)} disabled={libraryBusy || usable.length === 0}>
-            {scattered ? 'Re-roll scatter' : 'Scatter props'}
+          <button type="button" className="primary" title={scattered ? 'Throws the same props over the ground again in a new arrangement' : 'Spreads your props over the ground for you'} onClick={() => void scatter(true)} disabled={libraryBusy || usable.length === 0}>
+            {scattered ? 'Place them again' : 'Scatter props'}
           </button>
-          {scattered > 0 && <button type="button" onClick={() => clearScatter()}>Clear ({scattered})</button>}
+          {scattered > 0 && <button type="button" title="Takes the scattered props off the ground; the ones you placed by hand stay" onClick={() => clearScatter()}>Take them off ({scattered})</button>}
         </div>
         {usable.length === 0 ? (
           <div className="muted">Add STL props above to scatter them. The ground is generated; props are yours.</div>
         ) : (
           <Hint>
-            This ground ({preset.label.toLowerCase()}) asks for {preset.families.map((f) => f.family).join(', ')} props; anything marked Any is used as well.
+            This style ({preset.label.toLowerCase()}) asks for {preset.families.map((f) => familyLabel(f.family)).join(', ')} props; anything marked Any is used as well.
             {usable.length < doc.library.length ? ` ${doc.library.length - usable.length} of your ${doc.library.length} props cannot be used yet.` : ''}
-            {' '}Change the board, the ground or the amount and the scatter is re-rolled for you.
+            {' '}Change the board, the ground style or how much, and your props are placed again to fit — Undo puts them back.
           </Hint>
         )}
       </Section>
 
-      <Section title="Placed by hand" subtitle="Props you add yourself stay where they are when you re-roll the scatter.">
+      <Section title="Placed by hand" subtitle="Props you add yourself never move when the board, the ground or the scatter settings change.">
         {usable.length === 0 ? (
           <div className="muted">Add your STL props above first.</div>
         ) : (
@@ -404,7 +417,7 @@ function PropsPanel() {
         </ul>
         {placed.length === 0 && usable.length > 0 && <div className="muted">Nothing placed by hand yet.</div>}
       </Section>
-      <div className="muted">{doc.props.length} props on the board{preview ? ` · preview ${preview.ms} ms` : ''}</div>
+      <div className="muted">{doc.props.length} props on the board</div>
     </div>
   );
 }
@@ -418,13 +431,13 @@ function RulesPanel() {
   const { w, d } = doc.board.shape;
   return (
     <div className="studio-panel">
-      <Field label="Keep clear of the edge" unit="mm" help="Nothing is scattered this close to the rim, so cut edges and the rim stay clean.">
+      <Field label="Keep clear of the edge" unit="mm" help="Nothing is scattered this close to the edge, so the edge of the board and the cut lines stay clean.">
         <input type="number" min={0} max={10} step={0.5} value={doc.rules.rimInset} onChange={(e) => update((dd) => { dd.rules.rimInset = Math.max(0, Number(e.target.value) || 0); })} />
       </Field>
       <Field label="Sink props into the ground" unit="mm" help="Props are pushed this far into the ground so nothing floats or balances on a point.">
         <input type="number" min={0} max={3} step={0.1} value={doc.rules.sink} onChange={(e) => update((dd) => { dd.rules.sink = Math.max(0, Number(e.target.value) || 0); })} />
       </Field>
-      <Field label="Tallest prop" unit="mm" help={`Props are scaled down to fit under this height. Leave it on Auto to use the usual limit for this board size (${cap} mm).`}>
+      <Field label="Tallest prop" unit="mm" help={`Props are shrunk until they fit under this height. Leave it on Auto to use the usual limit for a board this size (${cap} mm).`}>
         <div className="button-row">
           <select value={doc.rules.heightCap === null ? 'auto' : 'custom'} onChange={(e) => update((dd) => { dd.rules.heightCap = e.target.value === 'auto' ? null : cap; })}>
             <option value="auto">Auto</option>
@@ -435,9 +448,9 @@ function RulesPanel() {
           )}
         </div>
       </Field>
-      <Section title="Foot zones" subtitle="Flat spots where models stand: the ground is levelled and nothing is scattered there.">
+      <Section title="Flat spots for models" subtitle="The ground is levelled inside each spot and nothing is scattered on it, so a model can stand flat.">
         <div className="button-row">
-          <button type="button" onClick={() => update((dd) => { dd.rules.footZones.push({ x: 0, y: 0, r: 7 }); })}>Add one at the centre</button>
+          <button type="button" title="Levels one 14 mm circle in the middle of the board" onClick={() => update((dd) => { dd.rules.footZones.push({ x: 0, y: 0, r: 7 }); })}>Add one at the centre</button>
           <button type="button" title="A grid of 25 mm squares, one flat spot each" onClick={() => update((dd) => {
             const nx = Math.max(1, Math.floor(w / 25)), ny = Math.max(1, Math.floor(d / 25));
             const zones = [];
@@ -446,12 +459,12 @@ function RulesPanel() {
           })}>
             One per 25 mm base
           </button>
-          {doc.rules.footZones.length > 0 && <button type="button" onClick={() => update((dd) => { dd.rules.footZones = []; })}>Clear</button>}
+          {doc.rules.footZones.length > 0 && <button type="button" title="Removes every flat spot; the ground goes back to its normal shape" onClick={() => update((dd) => { dd.rules.footZones = []; })}>Clear</button>}
         </div>
         <ul className="prop-list">
           {doc.rules.footZones.map((z, i) => (
             <li key={i}>
-              <span>Foot zone {i + 1}</span>
+              <span>Flat spot {i + 1}</span>
               <input type="number" title="x, mm" step={1} value={z.x} style={{ width: 52 }} onChange={(e) => update((dd) => { dd.rules.footZones[i].x = Number(e.target.value) || 0; })} />
               <input type="number" title="y, mm" step={1} value={z.y} style={{ width: 52 }} onChange={(e) => update((dd) => { dd.rules.footZones[i].y = Number(e.target.value) || 0; })} />
               <input type="number" title="radius, mm" step={0.5} min={3} value={z.r} style={{ width: 52 }} onChange={(e) => update((dd) => { dd.rules.footZones[i].r = Math.max(3, Number(e.target.value) || 3); })} />
@@ -486,6 +499,7 @@ export function StudioApp() {
   const baking = useStudioStore((s) => s.baking);
   const previewing = useStudioStore((s) => s.previewing);
   const preview = useStudioStore((s) => s.preview);
+  const notice = useStudioStore((s) => s.notice);
   const error = useStudioStore((s) => s.error);
   const useScene = useStudioStore((s) => s.useScene);
   const closeStudio = useAppStore((s) => s.closeStudio);
@@ -528,7 +542,7 @@ export function StudioApp() {
         <button type="button" className={showHelp ? 'active' : ''} title="Show or hide the explanations under each control" onClick={() => setView({ showHelp: !showHelp })}>
           ⓘ Help {showHelp ? 'on' : 'off'}
         </button>
-        <button type="button" onClick={() => closeStudio()} title="Back to the cutter; the scene is kept in this project">
+        <button type="button" onClick={() => closeStudio()} title="Back to the Bases screen; the scene is kept in this project">
           ← Back to bases
         </button>
       </header>
@@ -555,17 +569,26 @@ export function StudioApp() {
         <div className="studio-viewport">
           <StudioViewport />
           <div className="studio-hud">
-            <button type="button" className={viewMode === 'top' ? 'active' : ''} onClick={() => setViewMode('top')}>Top</button>
-            <button type="button" className={viewMode === 'orbit' ? 'active' : ''} onClick={() => setViewMode('orbit')}>3D</button>
-            <button type="button" disabled={!canUndo} onClick={() => undo()} title="Undo (Ctrl+Z)">↶</button>
-            <button type="button" disabled={!canRedo} onClick={() => redo()} title="Redo (Ctrl+Y)">↷</button>
+            <button type="button" className={viewMode === 'top' ? 'active' : ''} title="Look straight down at the board" onClick={() => setViewMode('top')}>Top</button>
+            <button type="button" className={viewMode === 'orbit' ? 'active' : ''} title="Turn the board around to look at it from the side" onClick={() => setViewMode('orbit')}>3D</button>
+            <button type="button" disabled={!canUndo} onClick={() => undo()} title="Take back the last change (Ctrl+Z)">↶ Undo</button>
+            <button type="button" disabled={!canRedo} onClick={() => redo()} title="Put back the change you just took back (Ctrl+Y)">↷ Redo</button>
           </div>
         </div>
         <div className="action-bar studio-bar">
           <div className="status">
-            {error ? <span className="error-text">{error}</span> : previewing ? 'Updating the preview…' : preview ? `${preview.propCount} props · ${doc.board.shape.w} × ${doc.board.shape.d} mm` : 'Building the preview…'}
+            {error ? (
+              <span className="error-text">{error}</span>
+            ) : notice ? (
+              <span className="studio-notice">
+                {notice.text}
+                {notice.undoable && (
+                  <button type="button" className="notice-undo" title="Puts the props back the way they were and takes back the change" onClick={() => undo()}>Undo</button>
+                )}
+              </span>
+            ) : previewing ? 'Updating the preview…' : preview ? `${preview.propCount} props · ${doc.board.shape.w} × ${doc.board.shape.d} mm` : 'Building the preview…'}
           </div>
-          <button type="button" className="baseify" disabled={baking} onClick={() => void useScene()} title="Build the scene and hand it to the cutter">
+          <button type="button" className="baseify" disabled={baking} onClick={() => void useScene()} title="Turns the ground and props into a base you can cut from, and takes you to the Bases screen">
             {baking ? 'Building the scene…' : 'Use this scene'}
           </button>
         </div>

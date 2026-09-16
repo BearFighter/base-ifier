@@ -116,7 +116,7 @@ export function AddBar() {
   const MODES: { id: 'multibase' | 'diorama' | 'single'; label: string; blurb: string }[] = [
     { id: 'multibase', label: 'Multibase', blurb: 'Place a unit frame (Kings of War, The Old World…) and cut the bases you want inside it.' },
     { id: 'diorama', label: 'Diorama', blurb: 'Cut the bases you need and keep every scrap of leftover material as extra bases.' },
-    { id: 'single', label: 'Single base', blurb: 'Cut one base topper out of the scene. Nothing else.' },
+    { id: 'single', label: 'Single base', blurb: 'Cut one base out of the scene. Nothing else.' },
   ];
   const modeSeg = (
     <span className="mode-seg" role="radiogroup" aria-label="What are you making?" title={MODES.find((m) => m.id === mode)?.blurb}>
@@ -130,8 +130,8 @@ export function AddBar() {
   const deleteBtn = selBox.depth > 0 && (
     <button type="button" className="danger-text" onClick={() => B.requestDeletePiece(selBox.id)} title="Delete the selected item (and anything inside it)">Delete “{selBox.piece.name}”</button>
   );
-  const usable = `${num(rootBox.usable.w)} × ${num(rootBox.usable.h)} mm usable`;
-  const usableTitle = 'The sculpted area inside the scene\'s sloped rim — the part you can actually cut bases from';
+  const usable = `${num(rootBox.usable.w)} × ${num(rootBox.usable.h)} mm — the flat part you can actually cut from`;
+  const usableTitle = 'The sculpted area inside the sloped edge of the scene — the part you can actually cut bases from';
   const frames = B.boxes.filter((b) => b.piece.role === 'frame');
 
   return (
@@ -170,7 +170,7 @@ export function AddBar() {
               <div className="row">
                 {modeSeg}
                 <span className="lbl" title={usableTitle}><strong>1 · Unit frame</strong> <span className="muted">({usable})</span></span>
-                {presetSelect(frameKey, setFrame, framePresets, 'Pick a unit footprint…', 'Unit footprints for Kings of War and The Old World; or type a size')}
+                {presetSelect(frameKey, setFrame, framePresets, 'Pick a unit frame…', 'Whole-unit frame sizes for Kings of War and The Old World; or type a size')}
                 {sizeInputs(frameShape, setFrameShape, 'Frontage, left to right (mm)')}
                 <button type="button" className="primary" onClick={() => { place(rootBox, frameShape, { role: 'frame', key: frameKey, name: byKey(frameKey)?.name }); setFrameRowOpen(false); }} title="Place a frame of this size on the scene; bases go inside it">Place frame</button>
                 {frames.length > 0 && <button type="button" onClick={() => setFrameRowOpen(false)} title="Hide the frame controls">Done</button>}
@@ -193,12 +193,12 @@ export function AddBar() {
               {note ?? (mode === 'multibase'
                 ? (frameBox
                   ? 'Add the removable row first if you want one (e.g. a 25 × 125 strip), then “Fill frame” with the small bases. Drag things to move them; corners resize. Press Base-ify when the layout looks right.'
-                  : 'Pick a unit footprint and press “Place frame”, then fill it with bases. A frame with nothing inside is printed as one solid multibase.')
+                  : 'Pick a unit frame and press “Place frame”, then fill it with bases. A frame with nothing inside is printed as one solid multibase.')
                 : mode === 'diorama'
-                  ? '“Usable” is the sculpted area inside the scene\'s sloped rim. Add the bases you need anywhere on it; when you press Base-ify, all the material left over becomes extra bases automatically.'
+                  ? 'The size in brackets is the flat part inside the sloped edge of the scene — the part you can cut from. Add the bases you need anywhere on it; when you press Base-ify, all the material left over becomes extra bases automatically.'
                   : rootBox.piece.children.length > 1
                     ? `Single base mode shows one base, but ${rootBox.piece.children.length} are placed. Delete the extras (Bases tab) or switch to Diorama to keep them.`
-                    : 'Pick the size of the base topper you want and press “Place base”. Drag it to the part of the sculpt you like, then press Base-ify.')}
+                    : 'Pick the size of the base you want and press “Place base”. Drag it to the part of the scene you like, then press Base-ify.')}
             </span>
           </div>
         )}

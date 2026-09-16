@@ -47,6 +47,13 @@ interface StudioState {
   libraryBusy: boolean;
   /** library item the user asked to remove (in-app confirm; never window.confirm) */
   confirmRemove: string | null;
+  /**
+   * Short "this just happened" line for the studio bar, cleared after a few
+   * seconds. Used when an edit re-places the scattered props, so the user is
+   * never surprised by the app rearranging their scene; `undoable` puts an
+   * Undo button inline in the message.
+   */
+  notice: { text: string; undoable: boolean } | null;
   error: string | null;
   history: StudioDocument[];
   future: StudioDocument[];
@@ -65,6 +72,10 @@ interface StudioState {
   registerLibraryFiles(files: File[]): Promise<void>;
   requestRemoveLibraryItem(id: string): void;
   cancelRemoveLibraryItem(): void;
+  /** say in the studio bar that the props were just placed again, and why */
+  showRescatterNotice(reason: string): void;
+  /** hide the studio bar's "this just happened" line */
+  dismissNotice(): void;
   /** remove a library item and every prop placed from it */
   removeLibraryItem(id: string): Promise<void>;
   updateLibraryItem(id: string, patch: Partial<Pick<StudioLibraryItem, 'name' | 'family' | 'licence' | 'weight'>>): void;
@@ -77,12 +88,20 @@ interface StudioState {
 
 const PREVIEW_TIMEOUT = 60_000;
 const BAKE_TIMEOUT = 180_000;
+/** how long the studio bar keeps a "this just happened" line */
+const NOTICE_MS = 4200;
+/** reason marker for the very first scatter of a scene (nothing was rearranged) */
+const FIRST_SCATTER = 'first-scatter';
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
 let previewSerial = 0;
 /** an edit changed something the scatter depends on: re-roll it with the same seed */
 let pendingRescatter = false;
+/** which setting caused it, in plain words, for the message the user sees */
+let pendingReason: string | null = null;
 /** the re-scatter's own edit must not schedule another one */
 let rescattering = false;
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+let noticeSerial = 0;
 
 /**
  * Everything the scatter depends on. When this changes (board size, preset,
@@ -104,6 +123,25 @@ function scatterKey(d: StudioDocument): string {
   ]);
 }
 
+/**
+ * Which edit moved the scatter, said the way the user would say it. Feeds the
+ * studio bar's message so an automatic re-place always names its cause.
+ */
+function scatterReason(prev: StudioDocument, next: StudioDocument): string {
+  const s = (d: StudioDocument) => JSON.stringify(d.board.shape) + '|' + (d.board.margin ?? 0);
+  if (s(prev) !== s(next)) return 'the new board size';
+  if (prev.ground.presetId !== next.ground.presetId) return 'the new ground style';
+  if (prev.rules.density !== next.rules.density) return 'how much you asked for';
+  if (prev.rules.heroProps !== next.rules.heroProps) return 'the centrepiece setting';
+  if (JSON.stringify(prev.rules.footZones) !== JSON.stringify(next.rules.footZones)) return 'the flat spots you changed';
+  if (prev.rules.rimInset !== next.rules.rimInset) return 'the gap you left round the edge';
+  if (prev.rules.heightCap !== next.rules.heightCap || prev.rules.sink !== next.rules.sink) return 'the new prop rules';
+  const before = (prev.library ?? []).length, after = (next.library ?? []).length;
+  if (after > before) return 'the props you just added';
+  if (after < before) return 'the props you have left';
+  return 'the prop settings you changed';
+}
+
 export const useStudioStore = create<StudioState>()((set, get) => ({
   doc: null,
   tab: 'board',
@@ -116,13 +154,14 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
   libraryFiles: new Map(),
   libraryBusy: false,
   confirmRemove: null,
+  notice: null,
   error: null,
   history: [],
   future: [],
 
   open(rawDoc) {
     const doc = normalizeStudioDocument(rawDoc);
-    set({ doc, tab: 'board', preview: null, dirty: true, error: null, confirmRemove: null, history: [], future: [] });
+    set({ doc, tab: 'board', preview: null, dirty: true, error: null, confirmRemove: null, notice: null, history: [], future: [] });
     void (async () => {
       // files added earlier in this session are still here; a re-opened scene asks for the rest
       await get().syncLibrary();
@@ -138,8 +177,12 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
   close() {
     if (previewTimer) clearTimeout(previewTimer);
     previewTimer = null;
+    if (noticeTimer) clearTimeout(noticeTimer);
+    noticeTimer = null;
+    noticeSerial++;
     pendingRescatter = false;
-    set({ doc: null, preview: null, previewing: false, dirty: false, confirmRemove: null });
+    pendingReason = null;
+    set({ doc: null, preview: null, previewing: false, dirty: false, confirmRemove: null, notice: null });
   },
 
   setTab(tab) { set({ tab }); },
@@ -157,6 +200,8 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
     // an edit that moves the scatter's ground rules re-rolls it (same seed, hand-placed props kept);
     // the re-scatter lands in THIS history entry, so one undo takes back the edit and the scatter
     if (!rescattering && scatterKey(doc) !== scatterKey(next) && (doc.props.some((p) => p.scattered) || next.props.some((p) => p.scattered))) {
+      // several quick edits batch into one re-place and one message (the preview debounce below)
+      if (!pendingRescatter) pendingReason = scatterReason(doc, next);
       pendingRescatter = true;
     }
     if (previewTimer) clearTimeout(previewTimer);
@@ -164,7 +209,11 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
       void (async () => {
         if (pendingRescatter) {
           pendingRescatter = false;
+          const reason = pendingReason ?? 'your change';
+          pendingReason = null;
           await get().scatter(false, { history: false });
+          // announce it: an automatic re-place must never look like the app losing the user's work
+          if (get().doc) get().showRescatterNotice(reason);
           if (previewTimer) clearTimeout(previewTimer);
           previewTimer = null;
         }
@@ -178,6 +227,8 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
     if (!doc || history.length === 0) return;
     const prev = history[history.length - 1];
     pendingRescatter = false;
+    pendingReason = null;
+    get().dismissNotice();
     set({ doc: prev, history: history.slice(0, -1), future: [doc, ...get().future].slice(0, 50), dirty: true });
     useAppStore.getState().saveStudioDocument(prev);
     void get().refreshPreview();
@@ -188,6 +239,8 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
     if (!doc || future.length === 0) return;
     const next = future[0];
     pendingRescatter = false;
+    pendingReason = null;
+    get().dismissNotice();
     set({ doc: next, future: future.slice(1), history: [...get().history, doc], dirty: true });
     useAppStore.getState().saveStudioDocument(next);
     void get().refreshPreview();
@@ -254,7 +307,7 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
       if (bad.length > 0) set({ error: `${bad.map((b) => b.name).join(', ')}: ${bad.length === 1 ? 'this STL is not a closed mesh, so it cannot be placed' : 'these STLs are not closed meshes, so they cannot be placed'}. Repair them in your sculpting tool first.` });
       if (added.length > 0) {
         // the first props on an empty board are scattered straight away; later ones re-roll (scatterKey)
-        if (doc.library.length === 0 && !doc.props.some((p) => p.scattered)) pendingRescatter = true;
+        if (doc.library.length === 0 && !doc.props.some((p) => p.scattered)) { pendingRescatter = true; pendingReason = FIRST_SCATTER; }
         get().update((d) => { d.library.push(...added); });
       } else {
         await get().refreshPreview();
@@ -266,6 +319,26 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
 
   requestRemoveLibraryItem(id) { set({ confirmRemove: id }); },
   cancelRemoveLibraryItem() { set({ confirmRemove: null }); },
+
+  showRescatterNotice(reason) {
+    const serial = ++noticeSerial;
+    if (noticeTimer) clearTimeout(noticeTimer);
+    const text = reason === FIRST_SCATTER
+      ? 'Your props were scattered over the ground — Undo takes them off again.'
+      : `Props were placed again to fit ${reason} — Undo puts them back.`;
+    set({ notice: { text, undoable: get().history.length > 0 } });
+    noticeTimer = setTimeout(() => {
+      noticeTimer = null;
+      if (serial === noticeSerial) set({ notice: null });
+    }, NOTICE_MS);
+  },
+
+  dismissNotice() {
+    if (noticeTimer) clearTimeout(noticeTimer);
+    noticeTimer = null;
+    noticeSerial++;
+    set({ notice: null });
+  },
 
   async removeLibraryItem(id) {
     set({ confirmRemove: null });

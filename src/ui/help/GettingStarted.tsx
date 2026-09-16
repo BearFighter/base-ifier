@@ -7,7 +7,7 @@ const STEPS: { title: string; text: string }[] = [
   { title: 'Load or make a scene', text: 'Drop an STL file anywhere on the window, pick one from the sample list, or make your own ground and props in Base Studio. The scene is the big sculpted base you will cut from.' },
   {
     title: 'Choose what you are making',
-    text: 'Use the Multibase / Diorama / Single base switch at the top of the controls. Multibase: place a unit frame (e.g. a Kings of War troop) and cut bases inside it. Diorama: cut the bases you need and keep all the leftover material as extra bases. Single base: cut one base topper.',
+    text: 'Use the Multibase / Diorama / Single base switch at the top of the controls. Multibase: place a unit frame (e.g. a Kings of War troop) and cut bases inside it. Diorama: cut the bases you need and keep all the leftover material as extra bases. Single base: cut one base and nothing else.',
   },
   { title: 'Place your bases', text: 'Pick sizes from the lists above the view, or type them. Drag to move, drag corners to resize. Nothing is cut yet, so try things freely.' },
   { title: 'Base-ify', text: 'Press the big orange button. Every base is cut out, magnet slots go underneath (3 × 2 mm unless you change them), and you can preview each one before downloading from the Export tab.' },
@@ -34,7 +34,7 @@ export function HowItWorks() {
   return (
     <div className="how-it-works">
       <h2>Base-ifier</h2>
-      <p className="how-it-works-lead">Turn one great sculpted slab into the bases you actually need. No spells required.</p>
+      <p className="how-it-works-lead">Turn one big sculpted base into the bases you actually need. No spells required.</p>
       <ol className="getting-started-steps">
         {STEPS.map((s, i) => (
           <li key={i}><strong>{s.title}.</strong> {s.text}</li>

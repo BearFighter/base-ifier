@@ -19,7 +19,7 @@ function Header() {
   return (
     <header className="app-header">
       <span className="app-name">Base-ifier</span>
-      <span className="app-tagline">Hew the bases thou needest from one great slab of sculpted ground</span>
+      <span className="app-tagline">Hew the bases thou needest from one great sculpted base</span>
       <div className="header-spacer" />
       <button type="button" className={showHelp ? 'active' : ''} title="Show or hide the explanations under each control" onClick={() => setView({ showHelp: !showHelp })}>
         ⓘ Help {showHelp ? 'on' : 'off'}

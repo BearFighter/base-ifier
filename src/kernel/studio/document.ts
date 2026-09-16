@@ -41,8 +41,8 @@ export interface StudioBoard {
   topScale: [number, number];
   /**
    * Extra board around the size you picked, mm per side. Single bases and unit
-   * footprints get 1.5 mm so the base can be cut out of the scene with clean edges
-   * (the margin is cut away); slabs and display boards get 0.
+   * frames get 1.5 mm so the base can be cut out of the scene with clean edges
+   * (the margin is cut away); big rectangles and display boards get 0.
    */
   margin: number;
 }
@@ -124,7 +124,7 @@ export interface StudioDocument {
   library: StudioLibraryItem[];
   props: StudioProp[];
   rules: StudioRules;
-  /** the last scatter seed, so "Re-roll" changes it */
+  /** the last scatter seed, so "Place them again" changes it */
   scatterSeed: number;
   /** the Source this document was last baked into, if any */
   sourceId?: string;
@@ -137,7 +137,7 @@ export interface BoardPreset {
   shape: Shape;
 }
 
-/** Board sizes offered in the studio: single bases, unit footprints, slabs, boards. */
+/** Board sizes offered in the studio: single bases, unit frames, big rectangles, display boards. */
 export const BOARD_PRESETS: BoardPreset[] = [
   { id: 'r25', label: '25 mm round', group: 'Single bases', shape: { kind: 'ellipse', w: 25, d: 25 } },
   { id: 'r32', label: '32 mm round', group: 'Single bases', shape: { kind: 'ellipse', w: 32, d: 32 } },
@@ -150,15 +150,15 @@ export const BOARD_PRESETS: BoardPreset[] = [
   { id: 's25', label: '25 mm square', group: 'Single bases', shape: { kind: 'rect', w: 25, d: 25 } },
   { id: 's40', label: '40 mm square', group: 'Single bases', shape: { kind: 'rect', w: 40, d: 40 } },
   { id: 's50', label: '50 mm square', group: 'Single bases', shape: { kind: 'rect', w: 50, d: 50 } },
-  { id: 'kow-inf-troop', label: 'KoW Infantry Troop 100 × 40', group: 'Unit footprints', shape: { kind: 'rect', w: 100, d: 40 } },
-  { id: 'kow-inf-reg', label: 'KoW Infantry Regiment 100 × 80', group: 'Unit footprints', shape: { kind: 'rect', w: 100, d: 80 } },
-  { id: 'kow-hinf-troop', label: 'KoW Heavy Infantry Troop 125 × 50', group: 'Unit footprints', shape: { kind: 'rect', w: 125, d: 50 } },
-  { id: 'kow-hinf-reg', label: 'KoW Heavy Infantry Regiment 125 × 100', group: 'Unit footprints', shape: { kind: 'rect', w: 125, d: 100 } },
-  { id: 'kow-horde', label: 'KoW Horde 200 × 80', group: 'Unit footprints', shape: { kind: 'rect', w: 200, d: 80 } },
-  { id: 'tow-inf-5', label: 'Old World rank of 5 (125 × 25)', group: 'Unit footprints', shape: { kind: 'rect', w: 125, d: 25 } },
-  { id: 'slab-100x50', label: '100 × 50 mm slab', group: 'Slabs', shape: { kind: 'rect', w: 100, d: 50 } },
-  { id: 'slab-150x100', label: '150 × 100 mm slab', group: 'Slabs', shape: { kind: 'rect', w: 150, d: 100 } },
-  { id: 'slab-200x150', label: '200 × 150 mm slab', group: 'Slabs', shape: { kind: 'rect', w: 200, d: 150 } },
+  { id: 'kow-inf-troop', label: 'KoW Infantry Troop 100 × 40', group: 'Unit frames', shape: { kind: 'rect', w: 100, d: 40 } },
+  { id: 'kow-inf-reg', label: 'KoW Infantry Regiment 100 × 80', group: 'Unit frames', shape: { kind: 'rect', w: 100, d: 80 } },
+  { id: 'kow-hinf-troop', label: 'KoW Heavy Infantry Troop 125 × 50', group: 'Unit frames', shape: { kind: 'rect', w: 125, d: 50 } },
+  { id: 'kow-hinf-reg', label: 'KoW Heavy Infantry Regiment 125 × 100', group: 'Unit frames', shape: { kind: 'rect', w: 125, d: 100 } },
+  { id: 'kow-horde', label: 'KoW Horde 200 × 80', group: 'Unit frames', shape: { kind: 'rect', w: 200, d: 80 } },
+  { id: 'tow-inf-5', label: 'Old World rank of 5 (125 × 25)', group: 'Unit frames', shape: { kind: 'rect', w: 125, d: 25 } },
+  { id: 'slab-100x50', label: '100 × 50 mm', group: 'Big rectangles you cut several bases from', shape: { kind: 'rect', w: 100, d: 50 } },
+  { id: 'slab-150x100', label: '150 × 100 mm', group: 'Big rectangles you cut several bases from', shape: { kind: 'rect', w: 150, d: 100 } },
+  { id: 'slab-200x150', label: '200 × 150 mm', group: 'Big rectangles you cut several bases from', shape: { kind: 'rect', w: 200, d: 150 } },
   { id: 'board-300', label: '300 × 300 mm board', group: 'Display boards', shape: { kind: 'rect', w: 300, d: 300 } },
   { id: 'board-24x18', label: '24 × 18 in board (610 × 457)', group: 'Display boards', shape: { kind: 'rect', w: 610, d: 457 } },
   { id: 'board-2x2', label: '2 × 2 ft board (610 × 610)', group: 'Display boards', shape: { kind: 'rect', w: 610, d: 610 } },
@@ -168,9 +168,9 @@ export function boardPreset(id: string): BoardPreset {
   return BOARD_PRESETS.find((b) => b.id === id) ?? BOARD_PRESETS[17];
 }
 
-/** Margin a preset gets: single bases and unit footprints are cut OUT of the scene, so they get room around them. */
+/** Margin a preset gets: single bases and unit frames are cut OUT of the scene, so they get room around them. */
 export function boardMargin(preset: BoardPreset): number {
-  return preset.group === 'Single bases' || preset.group === 'Unit footprints' ? 1.5 : 0;
+  return preset.group === 'Single bases' || preset.group === 'Unit frames' ? 1.5 : 0;
 }
 
 let counter = 0;
@@ -179,7 +179,7 @@ export function studioId(prefix: string): string {
   return `${prefix}${Date.now().toString(36)}${counter.toString(36)}`;
 }
 
-/** A fresh scene: a 150 x 100 slab of temple ruins with one centred foot zone off. */
+/** A fresh scene: a 150 x 100 board of temple ruins with no flat spots marked yet. */
 export function newStudioDocument(name = 'My scene', shape: Shape = { kind: 'rect', w: 150, d: 100 }, presetId = 'temple-ruins', margin = 0): StudioDocument {
   const seed = Math.floor(Math.random() * 1e9);
   return {

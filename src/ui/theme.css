@@ -135,6 +135,11 @@ button { font-family: var(--font-head); }
 .action-bar .baseify:disabled { filter: grayscale(0.6); opacity: 0.6; }
 .app-status { background: linear-gradient(180deg, #33200f, #2b1a0c); color: #d9c295; border-top: 2px solid var(--gold); font-style: italic; }
 .status-error { color: #ffd9c9; }
+/* the studio bar's "props were placed again" line: a wax-sealed note with its own Undo */
+.studio-bar .status { color: var(--text-1); }
+.studio-notice { color: var(--text-0); background: rgba(184, 137, 47, 0.16); border: 1px solid var(--gold); border-radius: 6px; padding: 4px 8px; }
+.studio-notice .notice-undo { font-family: var(--font-head); font-weight: 700; background: linear-gradient(180deg, #a03a24, #7a2c1a); color: #fff3d6; border: 1px solid var(--gold); border-radius: 4px; }
+.studio-notice .notice-undo:hover { filter: brightness(1.12); }
 .viewport-empty .how-it-works { background: var(--parchment); color: var(--text-0); border: 2px solid var(--border); border-radius: 6px; padding: 18px 22px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
 .how-it-works h2 { font-family: var(--font-fancy); font-size: 26px; margin: 0 0 6px; color: #3a2612; }
 .how-it-works h2::before { content: '📜 '; }

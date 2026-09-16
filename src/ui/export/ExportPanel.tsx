@@ -116,7 +116,7 @@ export function ExportPanel() {
       </div>
 
       <div className="field-col">
-        <div className="field-col-title">Piece size when exported</div>
+        <div className="field-col-title">Base size when exported</div>
         <label className="radio-row" title={matchHelp}>
           <input
             type="radio"
@@ -187,7 +187,7 @@ export function ExportPanel() {
         <button type="button" disabled={disabled} onClick={() => piece && exportPlateStl(piece.sourceId)}>
           Download everything on one print plate (STL)
         </button>
-        <Field label="Space between bases on the plate" unit="mm">
+        <Field label="Space between bases on the plate" unit="mm" help="Gap left between bases when they are laid out on one print plate. More space means less chance of them fusing; less space fits more on the plate.">
           <input
             type="number"
             step={0.5}
