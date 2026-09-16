@@ -50,9 +50,10 @@ check it renders, then exits.
 
 1. Bump `version` in `package.json` (e.g. `0.1.1`).
 2. Commit, tag and push: `git tag v0.1.1 && git push --tags`.
-3. The `Release` GitHub Actions workflow builds on Windows, macOS and Linux
-   runners (one after another) and attaches every installer, plus the
-   `latest*.yml` update manifests, to one GitHub Release for that tag.
+3. The `Release` GitHub Actions workflow creates a draft release for the tag,
+   builds on Windows, macOS and Linux runners in parallel, attaches every
+   installer plus the `latest*.yml` update manifests, and publishes the release
+   only once all three builds are in.
 4. Windows and Linux apps pick the new version up automatically on their next
    start (electron-updater reads the manifests from the latest GitHub Release);
    the mac build and the web build show a "Version x is out" chip that links to

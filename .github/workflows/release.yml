@@ -1,11 +1,15 @@
 name: Release
 
 # Tag a commit v<version> (matching package.json) and push the tag:
-#   git tag v0.1.1 && git push --tags
-# Builds the Windows installer, the macOS dmg/zip (x64 + arm64) and the Linux
-# AppImage, one platform after another, and publishes them with their update
-# manifests to a single GitHub Release. Windows and Linux apps update
-# themselves from that release; macOS (unsigned) only links to it.
+#   git tag v0.1.1 && git push origin v0.1.1
+# 1. `prepare` creates a DRAFT release for the tag (so the platform builds never
+#    race to create it: that once produced two releases with the same tag).
+# 2. The three platform builds run in parallel and upload their installers and
+#    update manifests (latest.yml, latest-mac.yml, latest-linux.yml) to it.
+# 3. `publish` flips the draft to a published release once every build is in,
+#    so installed apps only ever see complete releases.
+# Windows and Linux apps update themselves from the release; macOS (unsigned)
+# only links to it.
 
 on:
   push:
@@ -15,9 +19,27 @@ permissions:
   contents: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches package.json
+        run: |
+          v=$(node -p "require('./package.json').version")
+          [ "${GITHUB_REF_NAME}" = "v${v}" ] || { echo "tag ${GITHUB_REF_NAME} != package.json v${v}"; exit 1; }
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "release ${GITHUB_REF_NAME} already exists"
+          else
+            gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft --title "Base-ifier ${GITHUB_REF_NAME#v}" --generate-notes
+          fi
+
   build:
+    needs: prepare
     strategy:
-      max-parallel: 1
       fail-fast: false
       matrix:
         include:
@@ -36,16 +58,22 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - name: Check the tag matches package.json
-        shell: bash
-        run: |
-          v=$(node -p "require('./package.json').version")
-          [ "${GITHUB_REF_NAME}" = "v${v}" ] || { echo "tag ${GITHUB_REF_NAME} != package.json v${v}"; exit 1; }
       - run: npm run build
       - run: npm run electron:compile
-      - name: Build and publish (${{ matrix.flag }})
+      - name: Build and upload (${{ matrix.flag }})
         run: npx electron-builder ${{ matrix.flag }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # no certificates yet: never try to sign
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false --latest
+          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json assets -q '.assets[].name'
