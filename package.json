@@ -31,6 +31,8 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.5.0",
+    "@gltf-transform/functions": "^4.5.0",
     "@types/earcut": "^3.0.0",
     "@types/node": "^26.0.0",
     "@types/react": "~19.2.0",
@@ -41,6 +43,7 @@
     "cross-env": "^10.1.0",
     "electron": "^44.4.1",
     "electron-builder": "^26.15.3",
+    "meshoptimizer": "^1.2.0",
     "typescript": "~5.9.0",
     "vite": "^8.3.0",
     "vitest": "^5.0.0",
@@ -58,7 +61,7 @@
   "build": {
     "appId": "com.bitdeathlabs.baseifier",
     "productName": "Base-ifier",
-    "copyright": "Copyright \u00a9 2026 Bit Death Labs",
+    "copyright": "Copyright © 2026 Bit Death Labs",
     "directories": {
       "output": "release",
       "buildResources": "build"

@@ -6,6 +6,7 @@ import { GettingStarted } from '@/ui/help/GettingStarted';
 import { useAppStore } from '@/state/project';
 import { formatMm } from '@/ui/util/format';
 import { SampleLibrary } from './SampleLibrary';
+import { StudioEntry } from '@/ui/studio/StudioEntry';
 import { DefaultEdges } from './DefaultEdges';
 
 // The File System Access API's directory picker isn't in TS's bundled DOM
@@ -54,6 +55,7 @@ export function LibraryPanel() {
   const projectSources = useAppStore((s) => s.project.sources);
   const loadSourceFile = useAppStore((s) => s.loadSourceFile);
   const requestRemoveSource = useAppStore((s) => s.requestRemoveSource);
+  const openStudio = useAppStore((s) => s.openStudio);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [folderEntries, setFolderEntries] = useState<FolderEntry[] | null>(null);
   const [folderBusy, setFolderBusy] = useState(false);
@@ -120,6 +122,7 @@ export function LibraryPanel() {
       </div>
 
       <SampleLibrary />
+      <StudioEntry />
       <DefaultEdges />
 
       {folderEntries && (
@@ -179,6 +182,13 @@ export function LibraryPanel() {
                     {formatWD(project.nominal.w, project.nominal.d)} {shapeNoun(project.nominal)} ·{' '}
                     {formatTriangleCount(project.stats.tris)}
                   </div>
+                  {project.origin === 'studio' && (
+                    <div className="button-row">
+                      <button type="button" onClick={() => openStudio({ sourceId: id })} title="Change the ground or props, then use the scene again">
+                        Edit in Base Studio
+                      </button>
+                    </div>
+                  )}
 
                   {Math.abs(project.normalization.measuredScale - 1) > 0.002 && (
                     <div className="source-note">

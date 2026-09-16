@@ -7,6 +7,7 @@ import { AddBar } from '@/ui/cutter/AddBar';
 import { ActionBar } from '@/ui/ActionBar';
 import { LeftTabs } from '@/ui/LeftTabs';
 import { HowItWorks } from '@/ui/help/GettingStarted';
+import { StudioApp } from '@/ui/studio/StudioApp';
 
 function Header() {
   const showHelp = useAppStore((s) => s.view.showHelp);
@@ -104,6 +105,7 @@ function StatusBar() {
 }
 
 export function App() {
+  const surface = useAppStore((s) => s.view.surface ?? 'cutter');
   const loadSourceFile = useAppStore((s) => s.loadSourceFile);
   const hasSelection = useAppStore((s) => s.project.selectedId !== null);
   const anyLoading = useAppStore((s) => Object.values(s.sources).some((x) => x.status === 'loading'));
@@ -119,6 +121,8 @@ export function App() {
       if (/\.stl$/i.test(f.name)) await loadSourceFile(f);
     }
   }
+
+  if (surface === 'studio') return <StudioApp />;
 
   return (
     <div className={`app-shell two-col${dragging ? ' dragging' : ''}`} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>

@@ -262,6 +262,55 @@ async function run() {
   await wait(600);
   end('detail off/on');
 
+  // 8. Base Studio: a 125 x 50 sci-fi deck, scattered, handed to the cutter, framed, filled and Base-ified
+  try {
+    const studio = () => (window as any).__studioStore.getState();
+    begin();
+    st().openStudio();
+    for (let k = 0; k < 600 && !studio().preview; k++) await wait(50);
+    end('studio open + first preview', { previewMs: studio().preview?.ms ?? null });
+    begin();
+    studio().update((d: any) => { d.name = 'Autotest deck'; d.board.shape = { kind: 'rect', w: 125, d: 50 }; d.board.margin = 1.5; d.ground.presetId = 'scifi-deck'; d.ground.seed = 42; d.scatterSeed = 7; });
+    for (let k = 0; k < 600 && (studio().previewing || studio().dirty); k++) await wait(50);
+    end('studio preset change', { previewMs: studio().preview?.ms ?? null });
+    begin();
+    const tScatter = performance.now();
+    await studio().scatter(true);
+    const scatterMs = Math.round(performance.now() - tScatter);
+    for (let k = 0; k < 600 && (studio().previewing || studio().dirty); k++) await wait(50);
+    end('studio scatter', { scatterMs, props: studio().doc?.props.length ?? 0, previewMs: studio().preview?.ms ?? null });
+    begin();
+    const tBake = performance.now();
+    const srcId = await studio().useScene();
+    const bakeMs = Math.round(performance.now() - tBake);
+    await untilIdle();
+    for (let k = 0; k < 600 && st().geometry[st().project.sources[srcId]?.rootPieceId]?.status !== 'ready'; k++) await wait(50);
+    await wait(500);
+    end('studio use scene', { bakeMs, sourceId: srcId, tris: st().project.sources[srcId]?.stats.tris ?? null, surface: st().view.surface });
+    begin();
+    for (let i = 0; i < 50 && sels().length === 0; i++) await wait(100);
+    setSelect(sels()[0], 'kow|footprint|Heavy Infantry Troop');
+    await wait(150);
+    clickDock(/^Place frame$/);
+    await wait(400);
+    const bSel = sels().find((x) => /Individual base sizes/.test(x.title))!;
+    const o25 = Array.from(bSel.options).find((o) => /^kow\|/.test(o.value) && /25 x 25/.test(o.text))!;
+    setSelect(bSel, o25.value);
+    await wait(150);
+    clickDock(/^Fill frame$/);
+    await wait(800);
+    await st().baseify();
+    await untilIdle();
+    await wait(800);
+    const studioBases = Object.values(st().project.pieces).filter((p: any) => p.sourceId === srcId && p.role === 'base') as any[];
+    const warn = studioBases.flatMap((p: any) => st().geometry[p.id]?.data?.warnings ?? []);
+    end('studio frame + fill + base-ify', { bases: studioBases.length, previewBases: st().previewIds.length, warnings: warn.slice(0, 5) });
+    ping('studio done', studioBases.length);
+  } catch (e) {
+    ping('studio failed', e);
+    end('studio failed', { error: String(e) });
+  }
+
   // profile aggregation per phase (Chromium)
   if (profiler) {
     try {

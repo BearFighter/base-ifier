@@ -4,7 +4,7 @@
 import { useAppStore } from '@/state/project';
 
 const STEPS: { title: string; text: string }[] = [
-  { title: 'Load a scene', text: 'Drop an STL file anywhere on the window, or pick one from the sample list. The scene is the big sculpted base you will cut from.' },
+  { title: 'Load or make a scene', text: 'Drop an STL file anywhere on the window, pick one from the sample list, or make your own ground and props in Base Studio. The scene is the big sculpted base you will cut from.' },
   {
     title: 'Choose what you are making',
     text: 'Use the Multibase / Diorama / Single base switch at the top of the controls. Multibase: place a unit frame (e.g. a Kings of War troop) and cut bases inside it. Diorama: cut the bases you need and keep all the leftover material as extra bases. Single base: cut one base topper.',
@@ -40,7 +40,7 @@ export function HowItWorks() {
           <li key={i}><strong>{s.title}.</strong> {s.text}</li>
         ))}
       </ol>
-      <p className="how-it-works-foot">Start by dropping an STL here or choosing a sample in the Scene tab on the left.</p>
+      <p className="how-it-works-foot">Start by dropping an STL here, choosing a sample in the Scene tab on the left, or <button type="button" className="link" onClick={() => useAppStore.getState().openStudio()}>making a scene in Base Studio</button>.</p>
     </div>
   );
 }
