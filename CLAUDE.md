@@ -109,7 +109,10 @@ Built for the One Page Rules "S - Bases" set in `S - Bases/STL` (not tracked by 
   file://), opens external links in the system browser, turns downloads into Save As dialogs,
   and runs electron-updater against GitHub Releases (`build.publish` in package.json:
   owner `BearFighter`, repo `base-ifier`; tag `v<version>` = package.json version, CI in
-  `.github/workflows/release.yml` publishes the NSIS installer + `latest.yml`). `--smoke`
+  `.github/workflows/release.yml` builds Windows NSIS, macOS dmg+zip (x64+arm64, unsigned:
+  `mac.identity: null`, cannot self-update so the mac app shows a release link) and Linux
+  AppImage one platform after another into one GitHub Release with the `latest*.yml`
+  manifests; Linux targets cannot be built from Windows, so CI is the only check). `--smoke`
   loads the app and exits 0 when it rendered (CI uses it). `electron/preload.cjs` exposes
   `window.baseifierDesktop` (version, checkForUpdates, installUpdate, openExternal, onUpdate).
 - Renderer side: `src/app/config.ts` (Discord invite, GitHub repo, account URL, APP_VERSION
