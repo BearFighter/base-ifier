@@ -65,12 +65,6 @@ warns on first install (auto-updates still work) and macOS needs the
 right-click → Open dance and cannot self-update until the app is signed and
 notarised with an Apple Developer ID.
 
-## Account sign-in
-
-The "Sign in" button in the bottom bar is optional and intended for paid
-features. It talks to `https://baseifier.bitdeathlabs.com` as described in
-[docs/auth-api.md](docs/auth-api.md). Until that service exists the button
-explains that the account service is not available yet; nothing else changes.
 
 ## Development
 
