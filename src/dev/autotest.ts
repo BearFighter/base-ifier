@@ -262,7 +262,8 @@ async function run() {
   await wait(600);
   end('detail off/on');
 
-  // 8. Base Studio: a 125 x 50 sci-fi deck, scattered, handed to the cutter, framed, filled and Base-ified
+  // 8. Base Studio: a 125 x 50 sci-fi deck (generated ground, no props: props are the user's own
+  //    STLs and the autotest imports none), handed to the cutter, framed, filled and Base-ified
   try {
     const studio = () => (window as any).__studioStore.getState();
     begin();
@@ -278,7 +279,10 @@ async function run() {
     await studio().scatter(true);
     const scatterMs = Math.round(performance.now() - tScatter);
     for (let k = 0; k < 600 && (studio().previewing || studio().dirty); k++) await wait(50);
-    end('studio scatter', { scatterMs, props: studio().doc?.props.length ?? 0, previewMs: studio().preview?.ms ?? null });
+    // an empty prop library scatters nothing: the studio never invents props
+    const studioProps = studio().doc?.props.length ?? 0;
+    if (studioProps !== 0) throw new Error(`studio scattered ${studioProps} props with an empty library`);
+    end('studio scatter (empty library)', { scatterMs, library: studio().doc?.library.length ?? 0, props: studioProps, previewMs: studio().preview?.ms ?? null });
     begin();
     const tBake = performance.now();
     const srcId = await studio().useScene();

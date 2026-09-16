@@ -5,17 +5,18 @@
  * Same rules as the cutter: no jargon, help on every setting, ids and numbers
  * in React state (meshes stay in the studio store and reach three.js by ref).
  */
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import type { DragEvent } from 'react';
 import { useAppStore } from '@/state/project';
 import { useStudioStore } from '@/studio/store';
 import type { StudioTab } from '@/studio/store';
 import { Field, Section, Details } from '@/ui/common/Field';
 import { Hint } from '@/ui/common/Hint';
 import { BOARD_PRESETS, boardMargin, studioId } from '@/kernel/studio/document';
-import type { StudioDocument, StudioProp } from '@/kernel/studio/document';
+import type { LicenceTag, StudioDocument, StudioLibraryItem } from '@/kernel/studio/document';
+import type { PropFamily } from '@/kernel/terrain/presets';
 import { GENRE_PRESETS, genrePreset } from '@/kernel/terrain/presets';
 import { effectiveHeightCap } from '@/kernel/studio/bake';
-import { PARAMETRIC_CATALOG } from '@/kernel/props/parametric';
 import { useMoreBelow } from '@/ui/LeftTabs';
 import { StudioViewport } from './StudioViewport';
 
@@ -178,12 +179,122 @@ function GroundPanel() {
 
 // ---------------------------------------------------------------- Props
 
-function propLabel(p: StudioProp, assetNames: Map<string, string>): string {
-  if (p.assetId.startsWith('param:')) {
-    const kind = p.assetId.slice(6);
-    return PARAMETRIC_CATALOG.find((c) => c.kind === kind)?.label ?? kind;
-  }
-  return assetNames.get(p.assetId) ?? p.assetId;
+const FAMILY_CHOICES: { id: PropFamily | 'any'; label: string }[] = [
+  { id: 'rock', label: 'Rock' },
+  { id: 'debris', label: 'Debris' },
+  { id: 'scifi', label: 'Sci-fi' },
+  { id: 'ruin', label: 'Ruin' },
+  { id: 'alien', label: 'Alien' },
+  { id: 'wood', label: 'Wood' },
+  { id: 'bone', label: 'Bone' },
+  { id: 'any', label: 'Any' },
+];
+
+const LICENCE_CHOICES: { id: LicenceTag; label: string }[] = [
+  { id: 'own-rights', label: 'Own work' },
+  { id: 'cc0', label: 'CC0' },
+  { id: 'attribution', label: 'Attribution' },
+  { id: 'personal-only', label: 'Personal use only' },
+  { id: 'no-derivatives', label: 'No derivatives' },
+  { id: 'merchant-prints-only', label: 'Merchant prints only' },
+  { id: 'unknown', label: 'Unknown' },
+];
+
+const FAMILY_HELP = 'Genre presets pick props by family; Any is picked by every preset';
+const LICENCE_HELP = 'Only matters for the commercial, watermark-free export; ordinary exports are watermarked either way';
+const WEIGHT_HELP = 'How often it is picked compared with the others';
+
+const mm = (v: number): string => (v >= 10 ? Math.round(v).toString() : (Math.round(v * 10) / 10).toString());
+const tris = (n: number): string => (n >= 1000 ? `${Math.round(n / 1000)}k triangles` : `${n} triangles`);
+
+/** Open the library file picker (shared by the section button and any "file needed" row). */
+function pickLibraryFiles() {
+  (document.getElementById('studio-library-input') as HTMLInputElement | null)?.click();
+}
+
+/** One row of "Your props": the item's name, what it measures, and its three settings. */
+function LibraryRow({ id }: { id: string }) {
+  const item = useStudioStore((s) => s.doc?.library.find((it) => it.id === id));
+  const info = useStudioStore((s) => s.assetInfo[id]);
+  const used = useStudioStore((s) => s.doc?.props.filter((p) => p.assetId === id).length ?? 0);
+  const updateItem = useStudioStore((s) => s.updateLibraryItem);
+  const requestRemove = useStudioStore((s) => s.requestRemoveLibraryItem);
+  if (!item) return null;
+  return (
+    <li className="lib-item">
+      <div className="lib-head">
+        <input
+          type="text"
+          className="lib-name"
+          value={item.name}
+          title="What this prop is called in the lists"
+          onChange={(e) => updateItem(id, { name: e.target.value })}
+        />
+        {!info && <span className="lib-badge warn" title={`${item.fileName} is not loaded in this session`}>file needed</span>}
+        {info && info.error && <span className="lib-badge warn" title={info.error}>unreadable</span>}
+        {info && !info.error && !info.closed && <span className="lib-badge warn" title="This STL has holes in it, so it cannot be placed. Repair it in your sculpting tool.">open mesh</span>}
+        {info && info.heavy && <span className="lib-badge" title="Shown simplified while you work; the exported STL keeps every triangle.">heavy</span>}
+        <button type="button" className="icon-button" title="Remove this prop from the scene" onClick={() => requestRemove(id)}>×</button>
+      </div>
+      <div className="lib-meta">
+        {info && info.closed
+          ? `footprint ${mm(info.footprintRadius * 2)} mm · ${mm(info.height)} mm tall · ${tris(info.tris)}`
+          : `${item.fileName} · ${Math.max(1, Math.round(item.fileSize / 1024))} KB`}
+        {used > 0 ? ` · ${used} on the board` : ''}
+      </div>
+      {!info && (
+        <div className="button-row">
+          <button type="button" onClick={pickLibraryFiles}>Add the file again…</button>
+        </div>
+      )}
+      <div className="lib-controls">
+        <label title={FAMILY_HELP}>
+          Family
+          <select value={item.family} onChange={(e) => updateItem(id, { family: e.target.value as PropFamily | 'any' })}>
+            {FAMILY_CHOICES.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+          </select>
+        </label>
+        <label title={LICENCE_HELP}>
+          Licence
+          <select value={item.licence} onChange={(e) => updateItem(id, { licence: e.target.value as LicenceTag })}>
+            {LICENCE_CHOICES.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+          </select>
+        </label>
+        <label title={WEIGHT_HELP}>
+          How often
+          <input
+            type="number"
+            min={0}
+            max={10}
+            step={0.5}
+            value={item.weight ?? 1}
+            onChange={(e) => updateItem(id, { weight: Math.max(0, Math.min(10, Number(e.target.value) || 0)) })}
+          />
+        </label>
+      </div>
+    </li>
+  );
+}
+
+function RemoveLibraryDialog() {
+  const id = useStudioStore((s) => s.confirmRemove);
+  const name = useStudioStore((s) => (s.confirmRemove ? (s.doc?.library.find((it) => it.id === s.confirmRemove)?.name ?? 'this prop') : ''));
+  const count = useStudioStore((s) => (s.confirmRemove ? (s.doc?.props.filter((p) => p.assetId === s.confirmRemove).length ?? 0) : 0));
+  const cancel = useStudioStore((s) => s.cancelRemoveLibraryItem);
+  const remove = useStudioStore((s) => s.removeLibraryItem);
+  if (!id) return null;
+  return (
+    <div className="modal-backdrop" onClick={cancel}>
+      <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+        <h3>Remove “{name}”?</h3>
+        <p>{count > 0 ? `It is taken out of this scene’s props, and the ${count} ${count === 1 ? 'copy on the board is' : 'copies on the board are'} removed with it. The STL file on disk is not touched.` : 'It is taken out of this scene’s props. The STL file on disk is not touched.'}</p>
+        <div className="modal-actions">
+          <button type="button" onClick={cancel} autoFocus>Keep it</button>
+          <button type="button" className="danger" onClick={() => void remove(id)}>Remove prop</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function PropsPanel() {
@@ -191,16 +302,47 @@ function PropsPanel() {
   const update = useStudioStore((s) => s.update);
   const scatter = useStudioStore((s) => s.scatter);
   const clearScatter = useStudioStore((s) => s.clearScatter);
-  const assets = useStudioStore((s) => s.assets);
-  const assetsState = useStudioStore((s) => s.assetsState);
+  const registerLibraryFiles = useStudioStore((s) => s.registerLibraryFiles);
+  const libraryBusy = useStudioStore((s) => s.libraryBusy);
+  const assetInfo = useStudioStore((s) => s.assetInfo);
   const preview = useStudioStore((s) => s.preview);
-  const assetNames = new Map(assets.map((a) => [a.id, a.id.replace(/[-_]/g, ' ')]));
   const scattered = doc.props.filter((p) => p.scattered).length;
   const placed = doc.props.filter((p) => !p.scattered);
   const preset = genrePreset(doc.ground.presetId);
+  const usable = doc.library.filter((it) => assetInfo[it.id]?.closed);
+  const names = new Map(doc.library.map((it) => [it.id, it.name]));
   return (
     <div className="studio-panel">
-      <Section title="Scatter" subtitle="Strews the preset's rocks, rubble and elements over the ground, keeping off the rim and any foot zones.">
+      <Section title="Your props" subtitle="The rocks, ruins and bits strewn over the ground are your own STLs. Nothing else is ever used.">
+        <div className="button-row">
+          <button type="button" className="primary" disabled={libraryBusy} onClick={pickLibraryFiles}>
+            {libraryBusy ? 'Reading…' : 'Add STL props…'}
+          </button>
+          <span className="muted">{doc.library.length === 0 ? 'none yet' : `${doc.library.length} prop${doc.library.length === 1 ? '' : 's'}`}</span>
+        </div>
+        <input
+          id="studio-library-input"
+          type="file"
+          accept=".stl"
+          multiple
+          className="visually-hidden"
+          onChange={(e) => {
+            const files = Array.from(e.target.files ?? []);
+            e.target.value = '';
+            if (files.length) void registerLibraryFiles(files);
+          }}
+        />
+        <Hint>
+          Drop STL files anywhere on this page to add them too. Each one keeps three settings:
+          <strong> Family</strong> — {FAMILY_HELP}. <strong>Licence</strong> — {LICENCE_HELP}. <strong>How often</strong> — {WEIGHT_HELP}.
+        </Hint>
+        <ul className="lib-list">
+          {doc.library.map((it) => <LibraryRow key={it.id} id={it.id} />)}
+        </ul>
+        {doc.library.length === 0 && <div className="muted">No props yet. Add your own STLs — a rock, a skull, a broken column — and they are scattered over the generated ground.</div>}
+      </Section>
+
+      <Section title="Scatter" subtitle="Strews your props over the ground, keeping off the rim and any foot zones.">
         <Field label="How much" help="Light leaves room for models; heavy is a rubble field. Small boards get proportionally less.">
           <select value={doc.rules.density} onChange={(e) => update((d) => { d.rules.density = e.target.value as 'light' | 'medium' | 'heavy'; })}>
             <option value="light">Light</option>
@@ -212,43 +354,46 @@ function PropsPanel() {
           <input type="checkbox" checked={doc.rules.heroProps} onChange={(e) => update((d) => { d.rules.heroProps = e.target.checked; })} />
         </Field>
         <div className="button-row">
-          <button type="button" className="primary" onClick={() => void scatter(true)} disabled={assetsState === 'loading'}>
+          <button type="button" className="primary" onClick={() => void scatter(true)} disabled={libraryBusy || usable.length === 0}>
             {scattered ? 'Re-roll scatter' : 'Scatter props'}
           </button>
           {scattered > 0 && <button type="button" onClick={() => clearScatter()}>Clear ({scattered})</button>}
         </div>
-        <Hint>
-          This preset uses {preset.families.map((f) => f.family).join(', ')}{preset.parametric.length ? ` and ${preset.parametric.map((k) => k.kind.replace(/-/g, ' ')).join(', ')}` : ''}.
-          {assetsState === 'loading' ? ' Loading the rock pack…' : assetsState === 'error' ? ' The rock pack could not be loaded; only built elements are used.' : ` ${assets.length} pack props ready (all CC0).`}
-        </Hint>
+        {usable.length === 0 ? (
+          <div className="muted">Add STL props above to scatter them. The ground is generated; props are yours.</div>
+        ) : (
+          <Hint>
+            This ground ({preset.label.toLowerCase()}) asks for {preset.families.map((f) => f.family).join(', ')} props; anything marked Any is used as well.
+            {usable.length < doc.library.length ? ` ${doc.library.length - usable.length} of your ${doc.library.length} props cannot be used yet.` : ''}
+            {' '}Change the board, the ground or the amount and the scatter is re-rolled for you.
+          </Hint>
+        )}
       </Section>
+
       <Section title="Placed by hand" subtitle="Props you add yourself stay where they are when you re-roll the scatter.">
-        <div className="button-row">
-          <select id="studio-prop-pick" defaultValue={PARAMETRIC_CATALOG[0]?.kind ?? ''}>
-            <optgroup label="Built elements">
-              {PARAMETRIC_CATALOG.map((c) => <option key={c.kind} value={`param:${c.kind}`}>{c.label ?? c.kind}</option>)}
-            </optgroup>
-            {assets.length > 0 && (
-              <optgroup label="Rock pack (CC0)">
-                {assets.map((a) => <option key={a.id} value={a.id}>{assetNames.get(a.id)}</option>)}
-              </optgroup>
-            )}
-          </select>
-          <button type="button" onClick={() => {
-            const pick = (document.getElementById('studio-prop-pick') as HTMLSelectElement | null)?.value;
-            if (!pick) return;
-            const assetId = pick.startsWith('param:') || assets.some((a) => a.id === pick) ? pick : `param:${pick}`;
-            update((d) => {
-              d.props.push({ id: studioId('pr'), assetId, x: 0, y: 0, rotDeg: 0, scale: 1, sink: 0, seed: (Math.random() * 1e9) >>> 0, licence: 'cc0', scattered: false });
-            });
-          }}>
-            Add at centre
-          </button>
-        </div>
+        {usable.length === 0 ? (
+          <div className="muted">Add your STL props above first.</div>
+        ) : (
+          <div className="button-row">
+            <select id="studio-prop-pick" defaultValue={usable[0]?.id ?? ''}>
+              {usable.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
+            </select>
+            <button type="button" onClick={() => {
+              const pick = (document.getElementById('studio-prop-pick') as HTMLSelectElement | null)?.value;
+              const item = usable.find((it) => it.id === pick) ?? usable[0];
+              if (!item) return;
+              update((d) => {
+                d.props.push({ id: studioId('pr'), assetId: item.id, x: 0, y: 0, rotDeg: 0, scale: 1, sink: 0, seed: (Date.now() % 1e9) >>> 0, licence: item.licence, scattered: false });
+              });
+            }}>
+              Add at centre
+            </button>
+          </div>
+        )}
         <ul className="prop-list">
           {placed.map((p) => (
             <li key={p.id}>
-              <span>{propLabel(p, assetNames)}</span>
+              <span>{names.get(p.assetId) ?? 'missing prop'}</span>
               <input type="number" title="x, mm" step={1} value={p.x} style={{ width: 52 }} onChange={(e) => update((d) => { const t = d.props.find((q) => q.id === p.id); if (t) t.x = Number(e.target.value) || 0; })} />
               <input type="number" title="y, mm" step={1} value={p.y} style={{ width: 52 }} onChange={(e) => update((d) => { const t = d.props.find((q) => q.id === p.id); if (t) t.y = Number(e.target.value) || 0; })} />
               <input type="number" title="turn, degrees" step={15} value={p.rotDeg} style={{ width: 52 }} onChange={(e) => update((d) => { const t = d.props.find((q) => q.id === p.id); if (t) t.rotDeg = Number(e.target.value) || 0; })} />
@@ -257,7 +402,7 @@ function PropsPanel() {
             </li>
           ))}
         </ul>
-        {placed.length === 0 && <div className="muted">Nothing placed by hand yet.</div>}
+        {placed.length === 0 && usable.length > 0 && <div className="muted">Nothing placed by hand yet.</div>}
       </Section>
       <div className="muted">{doc.props.length} props on the board{preview ? ` · preview ${preview.ms} ms` : ''}</div>
     </div>
@@ -347,6 +492,20 @@ export function StudioApp() {
   const showHelp = useAppStore((s) => s.view.showHelp);
   const setView = useAppStore((s) => s.setView);
   const bodyRef = useMoreBelow(tab);
+  const registerLibraryFiles = useStudioStore((s) => s.registerLibraryFiles);
+  const [dragging, setDragging] = useState(false);
+
+  // dropped STLs go to this scene's prop library (in the cutter they would load as a base)
+  function handleDragOver(e: DragEvent) { e.preventDefault(); setDragging(true); }
+  function handleDragLeave(e: DragEvent) { e.preventDefault(); setDragging(false); }
+  async function handleDrop(e: DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    const files = Array.from(e.dataTransfer.files ?? []).filter((f) => /\.stl$/i.test(f.name));
+    if (files.length === 0) return;
+    setTab('props');
+    await registerLibraryFiles(files);
+  }
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -361,7 +520,7 @@ export function StudioApp() {
   if (!doc) return null;
 
   return (
-    <div className="app-shell two-col studio-shell">
+    <div className={`app-shell two-col studio-shell${dragging ? ' dragging' : ''}`} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
       <header className="app-header">
         <span className="app-name">Base-ifier</span>
         <span className="app-tagline">Base Studio · raise thine own ground and strew it with ruin</span>
@@ -417,6 +576,14 @@ export function StudioApp() {
           <span className="muted">Scroll to zoom, drag to turn the 3D view. Every base cut from this scene keeps the same underside and magnets as an STL.</span>
         </div>
       </footer>
+
+      <RemoveLibraryDialog />
+
+      {dragging && (
+        <div className="drop-overlay">
+          <span>Drop STL files to add them to your props</span>
+        </div>
+      )}
     </div>
   );
 }

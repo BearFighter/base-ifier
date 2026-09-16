@@ -9,8 +9,8 @@ export function StudioEntry() {
     <div className="studio-entry">
       <div className="panel-subtitle">Or make your own scene</div>
       <p className="muted">
-        Base Studio raises ground from a genre preset (ruins, swamp, sci-fi deck…) and strews it with rocks, rubble and
-        plating. The finished scene comes back here to be cut like any STL.
+        Base Studio raises ground from a genre preset (ruins, swamp, sci-fi deck…) and strews it with your own prop
+        STLs. The finished scene comes back here to be cut like any STL.
       </p>
       <button type="button" className="primary" onClick={() => openStudio()}>
         Make a scene in Base Studio

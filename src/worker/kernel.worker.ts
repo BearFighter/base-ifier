@@ -1,11 +1,10 @@
 /// <reference lib="webworker" />
 import * as Comlink from 'comlink';
-import { bakeStudio as bakeStudioScene, buildGround, placeProp, previewCell, scatterScene } from '../kernel/studio/bake';
+import { bakeStudio as bakeStudioScene, buildGround, heightCapWarnings, placeProp, previewCell, scatterScene } from '../kernel/studio/bake';
 import type { PropSource } from '../kernel/studio/bake';
 import { heightfieldToSlab } from '../kernel/terrain/mesh';
-import { buildParametric, PARAMETRIC_CATALOG } from '../kernel/props/parametric';
-import type { ParametricKind, Prop } from '../kernel/props/parametric';
-import { glbToSoup, groundSoup } from '../assets/glb';
+import type { Prop } from '../kernel/props/prop';
+import { groundSoup } from '../kernel/mesh/ground';
 import { weld } from '../kernel/mesh/weld';
 import { manifoldReport } from '../kernel/mesh/validate';
 import { concatSoups } from '../kernel/types';
@@ -26,7 +25,7 @@ import { shapePolygon } from '@/kernel/geom2d/shapes';
 import { MIN_CEILING } from '@/kernel/body/hollow';
 import { autoMagnetPositions } from '@/kernel/pipeline/autoMagnets';
 import { pieceToStl, plateToStl } from '@/kernel/pipeline/exportPiece';
-import { decimateForDisplay } from '@/kernel/mesh/decimate';
+import { decimateForDisplay, decimateSoup } from '@/kernel/mesh/decimate';
 import { boundsOfSoup } from '@/kernel/mesh/bbox';
 import type { ColumnInfo, ComputeRequest, ExportItem, KernelApi, MeshTransfer, PieceChainNode, PieceGeometryTransfer, SocketRequest, SourceSummary } from './api';
 
@@ -168,12 +167,27 @@ function summarize(id: string, name: string, prepared: PreparedSource): SourceSu
     return summary;
 }
 
-/** Base Studio prop assets (bundled CC0 pack + imports), parsed once per worker. */
-const studioAssets = new Map<string, { prop: Prop; family: string }>();
-const propSource: PropSource = {
-  get: (id) => studioAssets.get(id)?.prop ?? null,
-  byFamily: (family) => Array.from(studioAssets.entries()).filter(([, v]) => v.family === family).map(([k]) => k),
-};
+/**
+ * Base Studio prop geometry: the user's own STLs, parsed once per worker and
+ * keyed by library item id. Metadata (family, licence, weight) is NOT here — it
+ * lives on the document, which travels with every studio call.
+ */
+const studioAssets = new Map<string, { prop: Prop; preview: Prop }>();
+const propSource: PropSource = { get: (id) => studioAssets.get(id)?.prop ?? null };
+/** Same pool, but heavy props simplified: the studio viewport redraws on every edit. */
+const previewSource: PropSource = { get: (id) => studioAssets.get(id)?.preview ?? null };
+
+/** Props over this many triangles are simplified for the live preview (exports use the full mesh). */
+const PROP_PREVIEW_LIMIT = 150_000;
+
+/** A display-only copy of a heavy prop, simplified on a grid fine enough to keep its silhouette. */
+function previewProp(prop: Prop): Prop {
+  if (prop.soup.triCount <= PROP_PREVIEW_LIMIT) return prop;
+  const size = Math.max(prop.height, prop.footprintRadius * 2, 1);
+  const cell = Math.max(0.05, size / 150);
+  const simplified = meshToSoup(decimateSoup(prop.soup, cell).mesh);
+  return { ...prop, soup: simplified };
+}
 
 const api: KernelApi = {
   async loadSource(id, name, buffer, opts, onProgress) {
@@ -190,19 +204,22 @@ const api: KernelApi = {
     const out: StudioAssetInfo[] = [];
     for (const a of assets) {
       try {
-        const soup = glbToSoup(a.glb, { yUpToZUp: true, scale: a.scale ?? 1 });
+        const soup = readStl(a.stl);
         const g = groundSoup(soup);
-        // decimated scans can come out open; an open shell slices unpredictably, so it is never used
+        // an open shell slices unpredictably, so it is reported but never placed
         const closed = manifoldReport(weld(soup)).boundaryEdges === 0;
         const prop: Prop = { soup, footprintRadius: g.footprintRadius, height: g.height, underground: 0 };
-        if (closed) studioAssets.set(a.id, { prop, family: a.family });
-        out.push({ id: a.id, family: a.family, footprintRadius: g.footprintRadius, height: g.height, tris: soup.triCount, closed });
+        if (closed) studioAssets.set(a.id, { prop, preview: previewProp(prop) });
+        out.push({ id: a.id, name: a.name, footprintRadius: g.footprintRadius, height: g.height, tris: soup.triCount, closed, heavy: soup.triCount > PROP_PREVIEW_LIMIT });
       } catch (err) {
-        out.push({ id: a.id, family: a.family, footprintRadius: 0, height: 0, tris: 0, closed: false });
-        void err;
+        out.push({ id: a.id, name: a.name, footprintRadius: 0, height: 0, tris: 0, closed: false, heavy: false, error: err instanceof Error ? err.message : String(err) });
       }
     }
     return out;
+  },
+
+  async unregisterStudioAssets(ids) {
+    for (const id of ids) studioAssets.delete(id);
   },
 
   async scatterStudio(doc) {
@@ -214,16 +231,19 @@ const api: KernelApi = {
     const hf = buildGround(doc, previewCell(doc));
     const tGround = performance.now() - t0;
     const slab = heightfieldToSlab(hf, { zBase: doc.board.plateTop - 0.1 });
-    const warnings: string[] = [];
+    const warnings: string[] = [...heightCapWarnings(doc)];
+    const missing = new Set<string>();
     const propSoups = [];
     for (const p of doc.props) {
-      let prop: Prop | null = null;
-      if (p.assetId.startsWith('param:')) {
-        const kind = p.assetId.slice(6) as ParametricKind;
-        const entry = PARAMETRIC_CATALOG.find((c) => c.kind === kind);
-        if (entry) prop = buildParametric({ kind, params: { ...entry.defaults, ...(p.params ?? {}) }, seed: p.seed });
-      } else prop = propSource.get(p.assetId);
-      if (!prop) { warnings.push(`unknown prop ${p.assetId}`); continue; }
+      const prop = previewSource.get(p.assetId);
+      if (!prop) {
+        if (!missing.has(p.assetId)) {
+          missing.add(p.assetId);
+          const item = doc.library?.find((it) => it.id === p.assetId);
+          warnings.push(item ? `${item.name}: the STL is not loaded, so it is not shown (add ${item.fileName} again)` : 'a prop that is no longer in the library is not shown');
+        }
+        continue;
+      }
       propSoups.push(placeProp(prop, p, hf, doc.rules.sink, doc.board.plateTop));
     }
     const props = propSoups.length ? concatSoups(propSoups) : { positions: new Float32Array(0), triCount: 0 };

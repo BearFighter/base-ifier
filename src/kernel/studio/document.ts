@@ -7,8 +7,31 @@
  */
 import type { Shape } from '../types';
 import type { Circle } from '../props/scatter';
+import type { PropFamily } from '../terrain/presets';
 
 export type LicenceTag = 'cc0' | 'attribution' | 'merchant-prints-only' | 'personal-only' | 'no-derivatives' | 'own-rights' | 'unknown';
+
+/**
+ * One STL in the scene's prop library. Base Studio scatters nothing but these:
+ * the ground is generated, the props are the user's own files.
+ *
+ * The bytes are NOT part of the document (like the cutter's sources): the worker
+ * holds the geometry and the studio store holds the `File`. When a saved scene is
+ * re-opened the item is shown as "file needed" until the user adds the file again
+ * (matched by `fileName` + `fileSize`).
+ */
+export interface StudioLibraryItem {
+  id: string;
+  /** shown in the UI; defaults to the file name without its extension */
+  name: string;
+  fileName: string;
+  fileSize: number;
+  /** which genre presets scatter it; 'any' is picked by every preset */
+  family: PropFamily | 'any';
+  licence: LicenceTag;
+  /** multiplies the family's pick weight; 1 = as often as its siblings */
+  weight?: number;
+}
 
 export interface StudioBoard {
   shape: Shape;
@@ -61,13 +84,11 @@ export interface StudioStroke {
   kind: 'raise' | 'lower' | 'smooth' | 'flatten';
 }
 
-/** One placed prop. Either a bundled/imported asset or a parametric element. */
+/** One placed prop: always one of the scene library's STLs. */
 export interface StudioProp {
   id: string;
-  /** asset id from the pack manifest, or 'param:<kind>' */
+  /** id of the `StudioLibraryItem` this prop is an instance of */
   assetId: string;
-  /** parametric parameters when assetId starts with 'param:' */
-  params?: Record<string, number>;
   x: number;
   y: number;
   /** yaw, degrees */
@@ -99,6 +120,8 @@ export interface StudioDocument {
   version: 1;
   board: StudioBoard;
   ground: StudioGround;
+  /** the user's STL props available to this scene (metadata only; bytes live in the worker) */
+  library: StudioLibraryItem[];
   props: StudioProp[];
   rules: StudioRules;
   /** the last scatter seed, so "Re-roll" changes it */
@@ -167,8 +190,22 @@ export function newStudioDocument(name = 'My scene', shape: Shape = { kind: 'rec
     // leaning plate top (the OPR look) would shrink the usable area below the picked size
     board: { shape, plateTop: 2.984, topScale: [1, 1], margin },
     ground: { presetId, seed, roughness: 1, texture: 1, stamps: [], strokes: [] },
+    library: [],
     props: [],
     rules: { rimInset: 1.5, footZones: [], density: 'medium', heroProps: true, sink: 0.5, heightCap: null },
     scatterSeed: seed ^ 0x9e3779b9,
   };
+}
+
+/**
+ * Bring a document saved by an older build up to date: scenes from before the
+ * prop library had no `library`, and their props referred to generated elements
+ * that no longer exist, so those placements are dropped.
+ */
+export function normalizeStudioDocument(doc: StudioDocument): StudioDocument {
+  const library = Array.isArray(doc.library) ? doc.library : [];
+  const known = new Set(library.map((it) => it.id));
+  const props = (doc.props ?? []).filter((p) => known.has(p.assetId));
+  if (library === doc.library && props.length === (doc.props ?? []).length) return doc;
+  return { ...doc, library, props };
 }

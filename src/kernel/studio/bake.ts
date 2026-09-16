@@ -18,27 +18,35 @@ import { heightfieldToSlab, suggestedCell } from '../terrain/mesh';
 import { genrePreset } from '../terrain/presets';
 import { DENSITY_PRESETS, defaultHeightCap, scatter } from '../props/scatter';
 import type { ScatterAsset } from '../props/scatter';
-import { buildParametric, PARAMETRIC_CATALOG } from '../props/parametric';
-import type { ParametricKind, Prop } from '../props/parametric';
+import type { Prop } from '../props/prop';
 import { buildPreparedSourceFromMesh } from '../source/fromMesh';
 import type { PreparedSource } from '../source/prepareSource';
 import { boardShape } from './document';
-import type { StudioDocument, StudioProp } from './document';
+import type { StudioDocument, StudioLibraryItem, StudioProp } from './document';
 
 /** The sculpt (and its slab) must sit inside the plate top like the OPR sets do. */
 const RIM_TAPER = 1.5;
 /** Ground lip above the plate top at the rim, mm. */
 const RIM_LIP = 0.05;
 
+/**
+ * Geometry for the scene's library items, held by the worker. Only geometry:
+ * a prop's family, licence and pick weight live on the document
+ * (`StudioDocument.library`), which travels to the worker with every call.
+ */
 export interface PropSource {
-  /** bundled or imported assets by id: closed soup in local frame (bottom at z = 0) + footprint */
+  /** the user's STL for a library item id: closed soup in local frame (bottom at z = 0) + footprint */
   get(assetId: string): Prop | null;
-  /** asset ids of a family ('rock', 'debris', ...), for the scatter pool */
-  byFamily(family: string): string[];
 }
 
-/** A source with nothing in it: parametric props only. */
-export const NO_ASSETS: PropSource = { get: () => null, byFamily: () => [] };
+/** A source with nothing in it: an empty library scatters nothing. */
+export const NO_ASSETS: PropSource = { get: () => null };
+
+/** The scale range a user's own STL is scattered at: they are already at the size they sculpted. */
+export const PROP_SCALE_RANGE: [number, number] = [0.85, 1.15];
+
+/** A prop scaled below this by the height cap is too tall for the board, and the user is told. */
+export const TOO_TALL_SCALE = 0.7;
 
 const now = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
@@ -106,37 +114,52 @@ export function effectiveHeightCap(doc: StudioDocument): number {
   return doc.rules.heightCap ?? Math.min(preset.heightCap, defaultHeightCap(Math.min(w, d)));
 }
 
-function paramAsset(kind: string, params: Record<string, number> | undefined, seed: number): ScatterAsset | null {
-  const entry = PARAMETRIC_CATALOG.find((c) => c.kind === kind);
-  if (!entry) return null;
-  const prop = buildParametric({ kind: kind as ParametricKind, params: { ...entry.defaults, ...(params ?? {}) }, seed });
-  return { id: 'param:' + kind, footprintRadius: prop.footprintRadius, height: prop.height };
+/**
+ * The library items the preset would scatter, with their pick weights: the
+ * preset's weight for a family is shared among the items of that family, and the
+ * item's own `weight` multiplies it. Items tagged 'any' are picked by every
+ * preset (they get the average family weight). If no item matches the preset, the
+ * whole library is used rather than scattering nothing.
+ */
+export function scatterPool(doc: StudioDocument, source: PropSource): (ScatterAsset & { item: StudioLibraryItem })[] {
+  const preset = genrePreset(doc.ground.presetId);
+  const usable = (doc.library ?? []).filter((it) => source.get(it.id) !== null);
+  const weightOf = new Map(preset.families.map((f) => [f.family as string, f.weight]));
+  const mean = preset.families.length ? preset.families.reduce((a, f) => a + f.weight, 0) / preset.families.length : 1;
+  const matches = (it: StudioLibraryItem) => it.family === 'any' || weightOf.has(it.family);
+  let pool = usable.filter(matches);
+  if (pool.length === 0) pool = usable;
+  const perFamily = new Map<string, number>();
+  for (const it of pool) perFamily.set(it.family, (perFamily.get(it.family) ?? 0) + 1);
+  const out: (ScatterAsset & { item: StudioLibraryItem })[] = [];
+  for (const it of pool) {
+    const prop = source.get(it.id);
+    if (!prop || prop.footprintRadius <= 0) continue;
+    const share = (weightOf.get(it.family) ?? mean) / (perFamily.get(it.family) ?? 1);
+    out.push({
+      id: it.id,
+      footprintRadius: prop.footprintRadius,
+      height: prop.height,
+      weight: Math.max(0.001, share * (it.weight ?? 1)),
+      scale: PROP_SCALE_RANGE,
+      item: it,
+    });
+  }
+  return out;
 }
 
 /**
- * Re-roll the scattered props from the preset (hand-placed props are kept and
- * act as keep-outs). Returns the new prop list.
+ * Re-roll the scattered props from the scene's own STL library (hand-placed
+ * props are kept and act as keep-outs). An empty library scatters nothing: the
+ * ground is generated, the props are the user's.
  */
 export function scatterScene(doc: StudioDocument, source: PropSource): StudioProp[] {
-  const preset = genrePreset(doc.ground.presetId);
   const { top } = boardPolygons(doc);
   const kept = doc.props.filter((p) => !p.scattered);
-  const assets: (ScatterAsset & { params?: Record<string, number> })[] = [];
-  for (const p of preset.parametric) {
-    const a = paramAsset(p.kind, p.params, doc.scatterSeed);
-    if (a) assets.push({ ...a, weight: p.weight, params: p.params });
-  }
-  // bundled pack assets of the preset's families join the pool, sharing the family's weight
-  for (const fam of preset.families) {
-    const ids = source.byFamily(fam.family);
-    for (const id of ids) {
-      const a = source.get(id);
-      if (a) assets.push({ id, footprintRadius: a.footprintRadius, height: a.height, weight: fam.weight / ids.length, scale: [0.7, 1.3] });
-    }
-  }
+  const assets = scatterPool(doc, source);
   if (assets.length === 0) return kept;
   const keepOut = kept.map((p) => {
-    const a = p.assetId.startsWith('param:') ? paramAsset(p.assetId.slice(6), p.params, p.seed) : source.get(p.assetId);
+    const a = source.get(p.assetId);
     return { x: p.x, y: p.y, r: (a?.footprintRadius ?? 3) * p.scale };
   });
   const placements = scatter(top, assets, {
@@ -156,18 +179,35 @@ export function scatterScene(doc: StudioDocument, source: PropSource): StudioPro
     out.push({
       id: 'sp' + Math.floor(r() * 1e9).toString(36) + out.length.toString(36),
       assetId: pl.assetId,
-      params: asset?.params,
       x: pl.x,
       y: pl.y,
       rotDeg: pl.rotDeg,
       scale: pl.scale,
       sink: 0,
       seed: Math.floor(r() * 1e9),
-      licence: pl.assetId.startsWith('param:') ? 'own-rights' : 'cc0',
-      // pack assets are CC0 by construction of the core pack; imports set their own tag when placed by hand
+      // the licence is the user's own tag on the library item: only the commercial export cares
+      licence: asset?.item.licence ?? 'unknown',
       scattered: true,
       hero: pl.hero,
     });
+  }
+  return out;
+}
+
+/**
+ * Props the height cap had to shrink a long way: the user's STL is too tall for
+ * this board, and they should know rather than wonder why it came out small.
+ */
+export function heightCapWarnings(doc: StudioDocument): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const p of doc.props) {
+    // only the scatter's own scaling is the height cap's doing; a hand-placed size is the user's
+    if (!p.scattered || p.scale >= TOO_TALL_SCALE || seen.has(p.assetId)) continue;
+    seen.add(p.assetId);
+    const item = (doc.library ?? []).find((it) => it.id === p.assetId);
+    const name = item?.name ?? 'A prop';
+    out.push(`${name} is too tall for this board: it was shrunk to ${Math.round(p.scale * 100)}% to stay under ${Math.round(effectiveHeightCap(doc) * 10) / 10} mm. Use a shorter prop or raise "Tallest prop".`);
   }
   return out;
 }
@@ -218,7 +258,7 @@ export function placeProp(prop: Prop, p: StudioProp, hf: Heightfield, sinkDefaul
 export interface BakeResult {
   prepared: PreparedSource;
   heightfield: Heightfield;
-  /** props that could not be built (unknown asset) or were dropped as unprintable */
+  /** props whose STL was missing, props the height cap had to shrink a long way, and source warnings */
   warnings: string[];
   propCount: number;
   timings: Record<string, number>;
@@ -228,7 +268,7 @@ export interface BakeResult {
 export function bakeStudio(doc: StudioDocument, source: PropSource, name = doc.name): BakeResult {
   const t0 = now();
   const timings: Record<string, number> = {};
-  const warnings: string[] = [];
+  const warnings: string[] = [...heightCapWarnings(doc)];
   const { bottom, top } = boardPolygons(doc);
   const plate = doc.board.plateTop;
   const hf = buildGround(doc);
@@ -241,13 +281,12 @@ export function bakeStudio(doc: StudioDocument, source: PropSource, name = doc.n
   const shells: Soup[] = [slab];
   let placed = 0;
   for (const p of doc.props) {
-    let prop: Prop | null = null;
-    if (p.assetId.startsWith('param:')) {
-      const kind = p.assetId.slice(6) as ParametricKind;
-      const entry = PARAMETRIC_CATALOG.find((c) => c.kind === kind);
-      if (entry) prop = buildParametric({ kind, params: { ...entry.defaults, ...(p.params ?? {}) }, seed: p.seed });
-    } else prop = source.get(p.assetId);
-    if (!prop) { warnings.push(`unknown prop ${p.assetId} skipped`); continue; }
+    const prop: Prop | null = source.get(p.assetId);
+    if (!prop) {
+      const item = (doc.library ?? []).find((it) => it.id === p.assetId);
+      warnings.push(item ? `${item.name}: the STL is not loaded, so it was left out (add ${item.fileName} again)` : `a prop that is no longer in the library was left out`);
+      continue;
+    }
     const soup = placeProp(prop, p, hf, doc.rules.sink, plate);
     shells.push(soup);
     placed++;

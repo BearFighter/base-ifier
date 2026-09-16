@@ -1,4 +1,4 @@
-import { newStudioDocument } from '@/kernel/studio/document';
+import { newStudioDocument, normalizeStudioDocument } from '@/kernel/studio/document';
 import type { StudioDocument } from '@/kernel/studio/document';
 import { useStudioStore } from '@/studio/store';
 /**
@@ -35,6 +35,13 @@ function errorMessage(err: unknown): string {
 function stripExt(name: string): string {
   const i = name.lastIndexOf('.');
   return i > 0 ? name.slice(0, i) : name;
+}
+
+/** Studio scenes from an older build have no prop library; bring them all up to date on load. */
+function normalizeStudioLibrary(studio: Record<string, StudioDocument> | undefined): Record<string, StudioDocument> {
+  const out: Record<string, StudioDocument> = {};
+  for (const [id, doc] of Object.entries(studio ?? {})) out[id] = normalizeStudioDocument(doc);
+  return out;
 }
 
 /** In-flight compute promise per piece id, so a second request for the same
@@ -715,7 +722,7 @@ export const useAppStore = create<AppStore>()(
         }
         const prevSources = get().sources;
         set((s) => {
-          s.project = { ...project, export: { ...defaultExportSettings(), ...project.export, presupport: { ...defaultExportSettings().presupport, ...(project.export?.presupport ?? {}) } }, underside: { ...defaultUndersideSettings(), ...(project.underside ?? {}) }, plug: { ...defaultPlugSettings(), ...(project.plug ?? {}) }, studio: project.studio ?? {} };
+          s.project = { ...project, export: { ...defaultExportSettings(), ...project.export, presupport: { ...defaultExportSettings().presupport, ...(project.export?.presupport ?? {}) } }, underside: { ...defaultUndersideSettings(), ...(project.underside ?? {}) }, plug: { ...defaultPlugSettings(), ...(project.plug ?? {}) }, studio: normalizeStudioLibrary(project.studio) };
           s.geometry = {};
           s.view = { mode: 'top', showSculpt: true, tool: 'layout', drafts: [], activeDraftId: null, showHelp: s.view.showHelp, confirmDelete: null, confirmRemoveSource: null, leftTab: 'bases' };
           if (!s.project.mode) s.project.mode = 'multibase';

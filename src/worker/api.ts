@@ -170,24 +170,33 @@ export interface ExportItem extends ComputeRequest {
 
 export type ProgressCallback = (stage: string, fraction: number) => void;
 
-/** A bundled or imported prop handed to the worker as glb bytes (geometry only is enough). */
+/**
+ * One of the user's prop STLs handed to the worker. Base Studio scatters nothing
+ * else: the worker keeps the geometry, the document keeps the metadata (family,
+ * licence, pick weight) in `StudioDocument.library`.
+ */
 export interface StudioAssetTransfer {
+  /** the library item's id */
   id: string;
+  /** for warnings only */
+  name: string;
   family: string;
-  /** glb file contents; parsed in the worker with src/assets/glb.ts */
-  glb: ArrayBuffer;
-  /** glTF is metres and Y-up by default; the core pack is already mm and Y-up */
-  scale?: number;
+  /** the STL file's bytes (binary or ASCII) */
+  stl: ArrayBuffer;
 }
 
 export interface StudioAssetInfo {
   id: string;
-  family: string;
+  name: string;
   footprintRadius: number;
   height: number;
   tris: number;
-  /** a closed surface (no open edges); open scans are reported but never scattered or placed */
+  /** a closed surface (no open edges); open meshes are reported but never scattered or placed */
   closed: boolean;
+  /** over ~150k triangles: previewed simplified, exported in full */
+  heavy: boolean;
+  /** set when the file could not be read */
+  error?: string;
 }
 
 /** What the studio viewport draws: the ground and all props as flat triangle soups (positions only). */
@@ -210,8 +219,10 @@ export interface KernelApi {
   /** suggested magnet positions (piece-local) for the piece described by the chain */
   autoMagnets(req: { sourceId: string; chain: PieceChainNode[]; radius: number; minWall: number }): Promise<Vec2[]>;
   exportPiece(item: ExportItem): Promise<ArrayBuffer>;
-  /** Base Studio: parse and cache prop assets (bundled CC0 pack, imports) */
+  /** Base Studio: parse and cache the user's prop STLs (the only props the studio has) */
   registerStudioAssets(assets: StudioAssetTransfer[]): Promise<StudioAssetInfo[]>;
+  /** Base Studio: forget prop geometry for these library item ids */
+  unregisterStudioAssets(ids: string[]): Promise<void>;
   /** Base Studio: re-roll the scattered props of a document */
   scatterStudio(doc: StudioDocument): Promise<StudioProp[]>;
   /** Base Studio: ground + props meshes for the studio viewport (no weld/bins) */
