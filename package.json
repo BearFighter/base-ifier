@@ -1,0 +1,99 @@
+{
+  "name": "base-ifier",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "electron:compile": "tsc -p electron/tsconfig.json && node -e \"require('fs').copyFileSync('electron/preload.cjs','dist-electron/preload.cjs')\"",
+    "electron:dev": "concurrently -k -n vite,electron \"vite\" \"wait-on http://localhost:5173 && npm run electron:compile && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
+    "electron:smoke": "npm run build && npm run electron:compile && electron . --smoke",
+    "electron:build": "npm run build && npm run electron:compile && electron-builder --win --publish never",
+    "release": "npm run build && npm run electron:compile && electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.8",
+    "@react-three/fiber": "^9.7.0",
+    "comlink": "^4.4.2",
+    "earcut": "^3.2.3",
+    "electron-updater": "^6.8.9",
+    "fflate": "^0.8.3",
+    "idb-keyval": "^6.3.0",
+    "immer": "^11.0.0",
+    "react": "~19.2.0",
+    "react-dom": "~19.2.0",
+    "three": "0.186.0",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/earcut": "^3.0.0",
+    "@types/node": "^26.0.0",
+    "@types/react": "~19.2.0",
+    "@types/react-dom": "~19.2.0",
+    "@types/three": "0.186.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.5",
+    "cross-env": "^10.1.0",
+    "electron": "^44.4.1",
+    "electron-builder": "^26.15.3",
+    "typescript": "~5.9.0",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.0",
+    "wait-on": "^9.1.0"
+  },
+  "description": "Cut big sculpted wargaming bases into the base sizes you need, with magnet slots, and export print-ready STLs.",
+  "main": "dist-electron/main.js",
+  "homepage": "https://github.com/BearFighter/base-ifier",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BearFighter/base-ifier.git"
+  },
+  "author": "Bit Death Labs",
+  "license": "SEE LICENSE IN LICENSE",
+  "build": {
+    "appId": "com.bitdeathlabs.baseifier",
+    "productName": "Base-ifier",
+    "copyright": "Copyright \u00a9 2026 Bit Death Labs",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "shortcutName": "Base-ifier"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "BearFighter",
+        "repo": "base-ifier",
+        "releaseType": "release"
+      }
+    ]
+  }
+}

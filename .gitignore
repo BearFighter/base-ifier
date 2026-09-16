@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vite/
+*.log
+# Source STL library (large binaries, not part of the app)
+S - Bases/
+perf-logs/
+dist-electron/
+release/

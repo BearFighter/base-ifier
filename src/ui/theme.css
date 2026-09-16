@@ -1,0 +1,114 @@
+/* ==========================================================================
+   Base-ifier — medieval scroll theme. Loaded last; overrides the neutral
+   dark defaults in styles.css and cutter.css. Parchment, ink, wax and brass.
+   ========================================================================== */
+:root {
+  color-scheme: light;
+  --bg-0: #2b2118;               /* dark oak, behind everything */
+  --bg-1: #efe2c4;               /* parchment */
+  --bg-2: #e6d5ae;               /* darker parchment */
+  --bg-3: #d9c495;               /* aged edge */
+  --border: #8b6b3f;             /* ink-brown lines */
+  --text-0: #2a1d10;             /* ink */
+  --text-1: #5a4326;             /* faded ink */
+  --text-2: #8a6f4d;             /* very faded ink */
+  --accent: #7a2c1a;             /* wax red */
+  --accent-fg: #fff5e0;
+  --danger: #9b2a1c;
+  --warn: #9a5a12;
+  --ok: #3f6b2a;
+  --pending: #8a6f4d;
+  --gold: #b8892f;
+  --font-body: 'IM Fell English', 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
+  --font-head: 'Cinzel', 'Palatino Linotype', Georgia, serif;
+  --font-fancy: 'MedievalSharp', 'UnifrakturMage', 'Cinzel', Georgia, serif;
+  --parchment: radial-gradient(ellipse at 20% 10%, rgba(255, 250, 235, 0.55), transparent 60%),
+    radial-gradient(ellipse at 80% 90%, rgba(120, 80, 30, 0.12), transparent 55%),
+    linear-gradient(180deg, #efe2c4, #e8d8b5);
+  font-family: var(--font-body);
+  font-size: 14px;
+}
+
+html, body, #root { background: var(--bg-0); color: var(--text-0); }
+
+/* ---- header: a banner ---- */
+.app-header {
+  background: linear-gradient(180deg, #4a2f1c, #33200f);
+  border-bottom: 3px double var(--gold);
+  color: #f3e6c8;
+  padding: 6px 14px;
+}
+.app-name { font-family: var(--font-fancy); font-size: 24px; letter-spacing: 1px; color: #f6e2a8; text-shadow: 0 1px 0 #000; }
+.app-name::before { content: '⚔ '; }
+.app-tagline { font-family: var(--font-body); font-style: italic; color: #d9c295; font-size: 13px; }
+.app-header button { background: #5a3a22; color: #f3e6c8; border: 1px solid var(--gold); font-family: var(--font-head); font-size: 12px; }
+.app-header button.active, .app-header button:hover { background: #7a4a25; }
+
+/* ---- left menu: a hanging scroll ---- */
+.app-left { background: var(--parchment); border-right: 3px double var(--border); box-shadow: inset -6px 0 12px rgba(80, 50, 10, 0.15); }
+.tab-strip { background: linear-gradient(180deg, #d9c495, #cdb684); border-bottom: 2px solid var(--border); }
+.tab-strip .tab { font-family: var(--font-head); font-size: 12px; letter-spacing: 0.5px; color: #5a4326; border-bottom: 3px solid transparent; }
+.tab-strip .tab.active { color: #2a1d10; border-bottom-color: var(--accent); background: rgba(255, 250, 235, 0.45); }
+.tab-strip .tab.ready { color: var(--ok); }
+.tab-body { background: transparent; }
+.panel { background: transparent; border-bottom: 1px solid rgba(139, 107, 63, 0.35); }
+.panel-title, .panel-subtitle, .section-title, .getting-started-title { font-family: var(--font-head); color: #3a2612; }
+.panel-title { font-size: 15px; letter-spacing: 0.5px; border-bottom: 1px solid var(--gold); padding-bottom: 4px; }
+.help, .hint, .muted, .field-unit { color: var(--text-1); font-style: italic; }
+.details summary, details > summary { color: #5a4326; font-family: var(--font-head); font-size: 12px; }
+input, select, textarea { background: #fbf4e3; color: var(--text-0); border: 1px solid var(--border); border-radius: 3px; font-family: var(--font-body); }
+input:focus, select:focus { outline: 2px solid var(--gold); }
+
+/* buttons: leather with brass edges */
+button { font-family: var(--font-head); }
+.app-left button, .action-status button, .cutter-toolbar button, .modal-actions button, .button-group button {
+  background: linear-gradient(180deg, #8b5a2b, #6b4220); color: #f6e9cf; border: 1px solid #3a2612; border-radius: 4px;
+  box-shadow: inset 0 1px 0 rgba(255, 230, 180, 0.35), 0 1px 2px rgba(0, 0, 0, 0.35); font-size: 12px;
+}
+.app-left button:hover, .action-status button:hover, .cutter-toolbar button:hover:not(:disabled), .button-group button:hover { background: linear-gradient(180deg, #9b6a3a, #7a4f28); }
+.button-group button.active, .cutter-toolbar button.primary { background: linear-gradient(180deg, #a03a24, #7a2c1a); border-color: #3a1208; color: #fff5e0; }
+.cutter-toolbar button.primary:hover:not(:disabled) { background: linear-gradient(180deg, #b6452c, #8a331e); }
+.cutter-toolbar button.danger-text { background: #efe2c4; color: var(--danger); border-color: var(--danger); }
+.cutter-toolbar button:disabled, .action-status button:disabled, .button-group button:disabled { opacity: 0.45; }
+.icon-button, .link-button, .section-toggle, .tree-panel .icon-button { background: none !important; border: none !important; box-shadow: none !important; color: var(--text-1) !important; }
+.modal { background: var(--parchment); color: var(--text-0); border: 2px solid var(--border); }
+.modal h3 { font-family: var(--font-head); }
+.modal-actions button.danger { background: linear-gradient(180deg, #a03a24, #7a2c1a); }
+
+/* ---- work area ---- */
+.app-center { background: #1f1a14; }
+.layout-dock, .viewport-bar, .action-bar { background: var(--parchment); color: var(--text-0); border-color: var(--border); }
+.layout-dock { border-bottom: 3px double var(--border); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35); }
+.cutter-toolbar { color: var(--text-0); }
+.cutter-toolbar .lbl, .cutter-toolbar label { color: var(--text-1); }
+.cutter-toolbar .lbl strong { font-family: var(--font-head); color: #3a2612; font-size: 12px; }
+.cutter-toolbar .hint { color: var(--text-1); }
+.cutter-toolbar .warn { color: var(--warn); font-style: italic; }
+.cutter-toolbar .sep { background: var(--border); }
+.cutter-toolbar input[type='number'], .cutter-toolbar select { background: #fbf4e3; color: var(--text-0); border: 1px solid var(--border); }
+.mode-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.mode-seg button { border-radius: 0 !important; border: none !important; border-right: 1px solid var(--border) !important; box-shadow: none !important; padding: 4px 10px; }
+.mode-seg button:last-child { border-right: none !important; }
+.mode-seg button.active { background: linear-gradient(180deg, #a03a24, #7a2c1a) !important; }
+.action-bar { border-top: 3px double var(--border); }
+.action-status { color: var(--text-1); }
+.action-status strong { color: var(--text-0); }
+.action-bar .baseify {
+  font-family: var(--font-fancy); font-size: 18px; letter-spacing: 0.5px; color: #fff3d6;
+  background: radial-gradient(circle at 35% 30%, #c94a2f, #8a2d1a 60%, #5e1c10);
+  border: 2px solid #f0c95c; border-radius: 999px; padding: 10px 26px;
+  box-shadow: 0 0 0 3px #7a2c1a, 0 4px 14px rgba(0, 0, 0, 0.5), inset 0 2px 6px rgba(255, 220, 160, 0.35);
+  margin-left: auto;
+}
+.action-bar .baseify:hover:not(:disabled) { filter: brightness(1.1); transform: translateY(-1px); }
+.action-bar .baseify:disabled { filter: grayscale(0.6); opacity: 0.6; }
+.app-status { background: linear-gradient(180deg, #33200f, #2b1a0c); color: #d9c295; border-top: 2px solid var(--gold); font-style: italic; }
+.status-error { color: #ffd9c9; }
+.viewport-empty .how-it-works { background: var(--parchment); color: var(--text-0); border: 2px solid var(--border); border-radius: 6px; padding: 18px 22px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+.how-it-works h2 { font-family: var(--font-fancy); font-size: 26px; margin: 0 0 6px; color: #3a2612; }
+.how-it-works h2::before { content: '📜 '; }
+.how-it-works-lead { font-style: italic; color: var(--text-1); }
+.getting-started-steps li { margin-bottom: 6px; }
+.getting-started-steps li strong { font-family: var(--font-head); font-size: 12px; }
+.drop-overlay { background: rgba(60, 35, 10, 0.75); color: #f6e2a8; font-family: var(--font-fancy); font-size: 24px; }
+.cutter-svg text { font-family: var(--font-body); }
