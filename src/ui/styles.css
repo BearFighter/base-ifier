@@ -99,18 +99,26 @@ select {
   grid-area: left;
   display: flex;
   flex-direction: column;
+  /* the column is exactly the middle grid row tall; the menu inside it scrolls */
   min-height: 0;
+  overflow: hidden;
   border-right: 1px solid var(--border);
   background: var(--bg-1);
 }
 
-.app-left .library-panel {
+/*
+ * Old stacked layout (panels straight in the column, no tabs). These MUST stay
+ * direct-child selectors: with the tabbed menu the panels live inside
+ * `.tab-body`, which is the one scroller, and a max-height here clipped the
+ * Scene tab at 46% of the column with a nested, near-invisible scrollbar.
+ */
+.app-left > .library-panel {
   flex: 0 1 auto;
   max-height: 46%;
   overflow-y: auto;
 }
 
-.app-left .tree-panel {
+.app-left > .tree-panel {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;

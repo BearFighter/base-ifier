@@ -31,6 +31,26 @@
 
 html, body, #root { background: var(--bg-0); color: var(--text-0); }
 
+/* ---- scrollbars: a brass rod in a worn parchment groove ----
+   Where the system draws classic scrollbars (Chromium, and Firefox unless
+   Windows is set to hide them) this is an always-visible bar in the theme's
+   colours. Where it draws fading overlay ones, Firefox only paints the thumb
+   in these colours while you scroll, which is why the menu also has the
+   `more-below` shadow further down. */
+:root { scrollbar-color: #8b5a2b #dcc59b; }  /* inherited: reaches every scroller */
+* { scrollbar-width: thin; }                 /* not inherited: has to be set everywhere */
+/* Chromium ignores these once `scrollbar-color` is honoured; they are the
+   fallback for older Chromium/Electron builds that do not support it. */
+*::-webkit-scrollbar { width: 12px; height: 12px; }
+*::-webkit-scrollbar-track { background: #dcc59b; box-shadow: inset 1px 0 0 rgba(139, 107, 63, 0.6), inset -1px 0 0 rgba(139, 107, 63, 0.6); }
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #a8702f, #6b4220);
+  border: 1px solid #3a2612; border-radius: 7px;
+  box-shadow: inset 0 1px 0 rgba(255, 230, 180, 0.35);
+}
+*::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #c08a44, #8b5a2b); }
+*::-webkit-scrollbar-corner { background: #dcc59b; }
+
 /* ---- header: a banner ---- */
 .app-header {
   background: linear-gradient(180deg, #4a2f1c, #33200f);
@@ -51,6 +71,17 @@ html, body, #root { background: var(--bg-0); color: var(--text-0); }
 .tab-strip .tab.active { color: #2a1d10; border-bottom-color: var(--accent); background: rgba(255, 250, 235, 0.45); }
 .tab-strip .tab.ready { color: var(--ok); }
 .tab-body { background: transparent; }
+/* More to read below: a shadow across the foot of the menu, as if the scroll
+   carried on under the desk. Set by `useMoreBelow` in LeftTabs.tsx, because a
+   hidden-until-used scrollbar tells the reader nothing. `scroll` attachment
+   pins it to the foot of the menu instead of to the content. */
+.tab-body.more-below {
+  background-image: linear-gradient(to top, rgba(74, 47, 18, 0.34), rgba(74, 47, 18, 0));
+  background-repeat: no-repeat;
+  background-position: bottom;
+  background-size: 100% 22px;
+  background-attachment: scroll;
+}
 .panel { background: transparent; border-bottom: 1px solid rgba(139, 107, 63, 0.35); }
 .panel-title, .panel-subtitle, .section-title, .getting-started-title { font-family: var(--font-head); color: #3a2612; }
 .panel-title { font-size: 15px; letter-spacing: 0.5px; border-bottom: 1px solid var(--gold); padding-bottom: 4px; }

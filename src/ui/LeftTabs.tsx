@@ -1,6 +1,7 @@
 /**
  * One left-hand menu with tabs instead of stacked panels on both sides.
  */
+import { useEffect, useRef } from 'react';
 import { useAppStore } from '@/state/project';
 import { LibraryPanel } from '@/ui/library/LibraryPanel';
 import { TreePanel } from '@/ui/tree/TreePanel';
@@ -17,10 +18,38 @@ const TABS: { id: Tab; label: string; title: string }[] = [
   { id: 'export', label: 'Export', title: 'Download the finished bases' },
 ];
 
+/**
+ * Puts the `more-below` class on a menu's scrolling body while there is more
+ * to read under the fold, which draws the shadow at its bottom edge (see
+ * theme.css). Windows hides scrollbars until you actually scroll — Firefox
+ * draws them as a fading overlay — so the bar on its own is no sign that the
+ * list goes on. `watch` re-runs it when the tab, and so the content, changes;
+ * everything else is caught by watching the body and its panels resize.
+ */
+export function useMoreBelow(watch: unknown) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => el.classList.toggle('more-below', el.scrollHeight - el.clientHeight - el.scrollTop > 1);
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    for (const child of Array.from(el.children)) ro.observe(child);
+    return () => {
+      el.removeEventListener('scroll', update);
+      ro.disconnect();
+    };
+  }, [watch]);
+  return ref;
+}
+
 export function LeftTabs() {
   const tab = useAppStore((s) => s.view.leftTab);
   const setView = useAppStore((s) => s.setView);
   const baseified = useAppStore((s) => s.baseified);
+  const bodyRef = useMoreBelow(tab);
   return (
     <div className="left-tabs">
       <div className="tab-strip" role="tablist">
@@ -30,7 +59,7 @@ export function LeftTabs() {
           </button>
         ))}
       </div>
-      <div className="tab-body">
+      <div className="tab-body" ref={bodyRef}>
         {tab === 'base' && <LibraryPanel />}
         {tab === 'bases' && (
           <>

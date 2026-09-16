@@ -16,6 +16,7 @@ import type { StudioDocument, StudioProp } from '@/kernel/studio/document';
 import { GENRE_PRESETS, genrePreset } from '@/kernel/terrain/presets';
 import { effectiveHeightCap } from '@/kernel/studio/bake';
 import { PARAMETRIC_CATALOG } from '@/kernel/props/parametric';
+import { useMoreBelow } from '@/ui/LeftTabs';
 import { StudioViewport } from './StudioViewport';
 
 const STAMP_CHOICES: { id: string; label: string }[] = [
@@ -345,6 +346,7 @@ export function StudioApp() {
   const closeStudio = useAppStore((s) => s.closeStudio);
   const showHelp = useAppStore((s) => s.view.showHelp);
   const setView = useAppStore((s) => s.setView);
+  const bodyRef = useMoreBelow(tab);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -381,7 +383,7 @@ export function StudioApp() {
               </button>
             ))}
           </div>
-          <div className="tab-body">
+          <div className="tab-body" ref={bodyRef}>
             {tab === 'board' && <BoardPanel />}
             {tab === 'ground' && <GroundPanel />}
             {tab === 'props' && <PropsPanel />}

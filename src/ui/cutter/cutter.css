@@ -85,12 +85,20 @@
 .app-shell.two-col { grid-template-columns: 360px 1fr; grid-template-areas: 'header header' 'left center' 'status status'; }
 .app-shell.two-col .app-right { display: none; }
 .left-tabs { display: flex; flex-direction: column; min-height: 0; height: 100%; }
-.tab-strip { display: flex; border-bottom: 1px solid rgba(255, 255, 255, 0.1); background: rgba(20, 22, 27, 0.9); }
+.tab-strip { display: flex; flex: 0 0 auto; border-bottom: 1px solid rgba(255, 255, 255, 0.1); background: rgba(20, 22, 27, 0.9); }
 .tab-strip .tab { flex: 1; padding: 9px 6px; background: none; border: none; border-bottom: 2px solid transparent; color: #9aa0ab; font-size: 12px; cursor: pointer; }
 .tab-strip .tab:hover { color: #e6e6e6; }
 .tab-strip .tab.active { color: #fff; border-bottom-color: #3f83f0; }
 .tab-strip .tab.ready { color: #8ee0a3; }
-.tab-body { flex: 1; min-height: 0; overflow-y: auto; }
+/*
+ * The one scroll container of the left menu: it takes the whole column under
+ * the tab strip, and `scroll` (not `auto`) keeps the bar's track there at all
+ * times, so a long tab always shows that there is more below and nothing
+ * jumps sideways when you switch tabs. Panels inside must not scroll
+ * themselves; see `.app-left > .library-panel` in styles.css.
+ */
+.tab-body { flex: 1 1 auto; min-height: 0; overflow-y: scroll; overflow-x: hidden; overscroll-behavior: contain; }
+.tab-body > :last-child { margin-bottom: 8px; }
 
 /* ---- mode chooser ---- */
 .mode-bar { display: flex; align-items: stretch; gap: 8px; padding: 8px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: rgba(24, 26, 32, 0.96); }
@@ -136,7 +144,8 @@
 .studio-warn { position: absolute; bottom: 8px; left: 8px; right: 8px; font-size: 12px; color: #ffd08a; background: rgba(0, 0, 0, 0.45); padding: 4px 8px; border-radius: 6px; pointer-events: none; }
 .studio-tabs { display: flex; gap: 4px; padding: 8px 10px 0; }
 .studio-tabs button { flex: 1; font-size: 13px; padding: 6px 4px; }
-.studio-panel { padding: 10px; overflow: auto; min-height: 0; }
+/* the studio panels grow; the tab body around them is the scroller */
+.studio-panel { padding: 10px; }
 .preset-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin: 6px 0 10px; }
 .preset-grid button { text-align: left; padding: 6px 8px; font-size: 12px; border-radius: 6px; cursor: pointer; }
 .preset-grid button small { display: block; opacity: 0.7; font-size: 11px; margin-top: 2px; font-weight: normal; }
