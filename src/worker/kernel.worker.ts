@@ -1,5 +1,16 @@
 /// <reference lib="webworker" />
 import * as Comlink from 'comlink';
+import { bakeStudio as bakeStudioScene, buildGround, placeProp, previewCell, scatterScene } from '../kernel/studio/bake';
+import type { PropSource } from '../kernel/studio/bake';
+import { heightfieldToSlab } from '../kernel/terrain/mesh';
+import { buildParametric, PARAMETRIC_CATALOG } from '../kernel/props/parametric';
+import type { ParametricKind, Prop } from '../kernel/props/parametric';
+import { glbToSoup, groundSoup } from '../assets/glb';
+import { weld } from '../kernel/mesh/weld';
+import { manifoldReport } from '../kernel/mesh/validate';
+import { concatSoups } from '../kernel/types';
+import type { StudioDocument } from '../kernel/studio/document';
+import type { StudioAssetInfo, StudioAssetTransfer, StudioPreviewTransfer } from './api';
 import { presupport, autoTiltDeg, densitySpacing } from '../kernel/pipeline/presupport';
 import type { ExportablePiece } from '../kernel/pipeline/exportPiece';
 import { zipSync } from 'fflate';
@@ -9,10 +20,15 @@ import { readStl } from '@/kernel/stl/read';
 import { prepareSource, type PreparedSource } from '@/kernel/source/prepareSource';
 import { computePiece, meshToSoup, rootPieceParams, sourceFrame, type ParentFrame, type PieceResult } from '@/kernel/pipeline/computePiece';
 import { magnetSlotSpecs } from '@/kernel/body/magnetSlots';
+import { materialThickness, socketFor } from '@/kernel/pipeline/plug';
+import type { SocketSpec } from '@/kernel/pipeline/plug';
+import { shapePolygon } from '@/kernel/geom2d/shapes';
+import { MIN_CEILING } from '@/kernel/body/hollow';
 import { autoMagnetPositions } from '@/kernel/pipeline/autoMagnets';
 import { pieceToStl, plateToStl } from '@/kernel/pipeline/exportPiece';
 import { decimateForDisplay } from '@/kernel/mesh/decimate';
-import type { ComputeRequest, ExportItem, KernelApi, MeshTransfer, PieceChainNode, PieceGeometryTransfer, SourceSummary } from './api';
+import { boundsOfSoup } from '@/kernel/mesh/bbox';
+import type { ColumnInfo, ComputeRequest, ExportItem, KernelApi, MeshTransfer, PieceChainNode, PieceGeometryTransfer, SocketRequest, SourceSummary } from './api';
 
 interface SourceEntry {
   prepared: PreparedSource;
@@ -30,7 +46,7 @@ const FULL_CACHE_SIZE = 6;
 const sources = new Map<string, SourceEntry>();
 
 function chainKey(chain: PieceChainNode[], upto: number): string {
-  return JSON.stringify(chain.slice(0, upto + 1).map((n) => [n.shape, n.xy, n.rotDeg, n.edges, n.profile ?? null, n.role ?? 'base']));
+  return JSON.stringify(chain.slice(0, upto + 1).map((n) => [n.shape, n.xy, n.rotDeg, n.edges, n.profile ?? null, n.role ?? 'base', n.cut ?? 'full', n.plugDepth ?? null, n.plugClearance ?? null, n.sockets ?? null]));
 }
 
 function sizingKey(req: ComputeRequest): string {
@@ -46,7 +62,7 @@ function resolveParentFrame(entry: SourceEntry, chain: PieceChainNode[]): Parent
     let cached = entry.cache.get(key);
     if (!cached) {
       const node = chain[i];
-      const params = i === 0 ? rootPieceParams(src) : { shape: node.shape, xy: node.xy, rotDeg: node.rotDeg, edges: node.edges, profile: node.profile, role: node.role };
+      const params = i === 0 ? rootPieceParams(src) : paramsFor(src, frame, node);
       const result = computePiece(frame, params, { source: src, skipSculpt: true, stamp: entry.stamp });
       cached = { result, sizingKey: '' };
       entry.cache.set(key, cached);
@@ -54,6 +70,21 @@ function resolveParentFrame(entry: SourceEntry, chain: PieceChainNode[]): Parent
     frame = cached.result.frame;
   }
   return frame;
+}
+
+/** Piece params for a chain node, with plug sockets resolved to source-frame pockets. */
+function paramsFor(src: PreparedSource, frame: ParentFrame, node: PieceChainNode, hollow?: ComputeRequest['underside']) {
+  const sockets: SocketSpec[] = [];
+  for (const sk of node.sockets ?? []) sockets.push(resolveSocket(src, frame, sk, hollow));
+  return { shape: node.shape, xy: node.xy, rotDeg: node.rotDeg, edges: node.edges, profile: node.profile, role: node.role, cut: node.cut, plugDepth: node.plugDepth, plugClearance: node.plugClearance, sockets };
+}
+
+function resolveSocket(src: PreparedSource, frame: ParentFrame, sk: SocketRequest, hollow?: ComputeRequest['underside']): SocketSpec {
+  const poly = shapePolygon(sk.shape, frame.origin[0] + sk.xy[0], frame.origin[1] + sk.xy[1], sk.rotDeg);
+  const depth = Math.max(hollow ? hollow.depth + MIN_CEILING : 1, sk.plugDepth);
+  const bottomZ = src.mode === 'generic' ? 0 : src.sculptTrimZ;
+  const d = socketFor(src.sculpt, src.bins, poly, { plug: sk.plug, depth, clearance: sk.clearance, bottomZ });
+  return { poly: d.poly, floorZ: d.floorZ, backing: d.backing };
 }
 
 function toMesh(soup: Soup): MeshTransfer {
@@ -84,7 +115,7 @@ function compute(req: ComputeRequest): PieceResult {
   }
   const frame = resolveParentFrame(entry, chain);
   const last = chain[chain.length - 1];
-  const params = chain.length === 1 ? rootPieceParams(src) : { shape: last.shape, xy: last.xy, rotDeg: last.rotDeg, edges: last.edges, profile: last.profile, role: last.role };
+  const params = chain.length === 1 ? rootPieceParams(src) : paramsFor(src, frame, last, req.underside);
   const magnetSlots = req.magnets ? magnetSlotSpecs(req.magnets.sizing, req.magnets.slots) : [];
   entry.stamp.id++;
   const result = computePiece(frame, params, {
@@ -108,14 +139,8 @@ function compute(req: ComputeRequest): PieceResult {
   return result;
 }
 
-const api: KernelApi = {
-  async loadSource(id, name, buffer, opts, onProgress) {
-    const t0 = performance.now();
-    const raw = readStl(buffer);
-    const tRead = performance.now() - t0;
-    const prepared = prepareSource(raw, name, { nominal: opts?.nominal, onProgress: onProgress ? (stage, fraction) => { void onProgress(stage, fraction); } : undefined });
-    prepared.timings.read = tRead;
-    sources.set(id, { prepared, cache: new Map(), full: new Map(), stamp: { arr: new Uint32Array(prepared.sculpt.triCount), id: 0 } });
+/** The renderer-side description of a prepared source (also used for studio bakes). */
+function summarize(id: string, name: string, prepared: PreparedSource): SourceSummary {
     const summary: SourceSummary = {
       id,
       name,
@@ -141,7 +166,85 @@ const api: KernelApi = {
       timings: prepared.timings,
     };
     return summary;
+}
+
+/** Base Studio prop assets (bundled CC0 pack + imports), parsed once per worker. */
+const studioAssets = new Map<string, { prop: Prop; family: string }>();
+const propSource: PropSource = {
+  get: (id) => studioAssets.get(id)?.prop ?? null,
+  byFamily: (family) => Array.from(studioAssets.entries()).filter(([, v]) => v.family === family).map(([k]) => k),
+};
+
+const api: KernelApi = {
+  async loadSource(id, name, buffer, opts, onProgress) {
+    const t0 = performance.now();
+    const raw = readStl(buffer);
+    const tRead = performance.now() - t0;
+    const prepared = prepareSource(raw, name, { nominal: opts?.nominal, onProgress: onProgress ? (stage, fraction) => { void onProgress(stage, fraction); } : undefined });
+    prepared.timings.read = tRead;
+    sources.set(id, { prepared, cache: new Map(), full: new Map(), stamp: { arr: new Uint32Array(prepared.sculpt.triCount), id: 0 } });
+    return summarize(id, name, prepared);
   },
+
+  async registerStudioAssets(assets) {
+    const out: StudioAssetInfo[] = [];
+    for (const a of assets) {
+      try {
+        const soup = glbToSoup(a.glb, { yUpToZUp: true, scale: a.scale ?? 1 });
+        const g = groundSoup(soup);
+        // decimated scans can come out open; an open shell slices unpredictably, so it is never used
+        const closed = manifoldReport(weld(soup)).boundaryEdges === 0;
+        const prop: Prop = { soup, footprintRadius: g.footprintRadius, height: g.height, underground: 0 };
+        if (closed) studioAssets.set(a.id, { prop, family: a.family });
+        out.push({ id: a.id, family: a.family, footprintRadius: g.footprintRadius, height: g.height, tris: soup.triCount, closed });
+      } catch (err) {
+        out.push({ id: a.id, family: a.family, footprintRadius: 0, height: 0, tris: 0, closed: false });
+        void err;
+      }
+    }
+    return out;
+  },
+
+  async scatterStudio(doc) {
+    return scatterScene(doc, propSource);
+  },
+
+  async previewStudio(doc) {
+    const t0 = performance.now();
+    const hf = buildGround(doc, previewCell(doc));
+    const tGround = performance.now() - t0;
+    const slab = heightfieldToSlab(hf, { zBase: doc.board.plateTop - 0.1 });
+    const warnings: string[] = [];
+    const propSoups = [];
+    for (const p of doc.props) {
+      let prop: Prop | null = null;
+      if (p.assetId.startsWith('param:')) {
+        const kind = p.assetId.slice(6) as ParametricKind;
+        const entry = PARAMETRIC_CATALOG.find((c) => c.kind === kind);
+        if (entry) prop = buildParametric({ kind, params: { ...entry.defaults, ...(p.params ?? {}) }, seed: p.seed });
+      } else prop = propSource.get(p.assetId);
+      if (!prop) { warnings.push(`unknown prop ${p.assetId}`); continue; }
+      propSoups.push(placeProp(prop, p, hf, doc.rules.sink, doc.board.plateTop));
+    }
+    const props = propSoups.length ? concatSoups(propSoups) : { positions: new Float32Array(0), triCount: 0 };
+    const all = concatSoups([slab, props]);
+    const bounds = boundsOfSoup(all);
+    const ground: MeshTransfer = { positions: slab.positions.slice(0, slab.triCount * 9), triCount: slab.triCount };
+    const propsT: MeshTransfer = { positions: props.positions.slice(0, props.triCount * 9), triCount: props.triCount };
+    const out: StudioPreviewTransfer = { ground, props: propsT, bounds, propCount: propSoups.length, warnings, timings: { ground: tGround, total: performance.now() - t0 } };
+    return Comlink.transfer(out, [ground.positions.buffer as ArrayBuffer, propsT.positions.buffer as ArrayBuffer]);
+  },
+
+  async bakeStudio(id, doc) {
+    const res = bakeStudioScene(doc, propSource, doc.name);
+    const prepared = res.prepared;
+    prepared.warnings.push(...res.warnings.filter((w) => !prepared.warnings.includes(w)));
+    prepared.timings.bake = res.timings.ground + res.timings.slab + res.timings.props;
+    sources.set(id, { prepared, cache: new Map(), full: new Map(), stamp: { arr: new Uint32Array(prepared.sculpt.triCount), id: 0 } });
+    return summarize(id, doc.name, prepared);
+  },
+
+
 
   async unloadSource(id) {
     sources.delete(id);
@@ -191,12 +294,26 @@ const api: KernelApi = {
       body,
       sculpt,
       hasSculpt: !req.skipSculpt,
+      carved: r.carved,
       warnings: r.warnings,
       bodyVolume: r.bodyVolume,
       bounds: r.bounds,
       timings: r.timings,
     };
     return Comlink.transfer(out, transfers);
+  },
+
+  async columnInfo(req): Promise<ColumnInfo | null> {
+    const entry = sources.get(req.sourceId);
+    if (!entry || req.chain.length < 2) return null;
+    const src = entry.prepared;
+    const frame = resolveParentFrame(entry, req.chain);
+    const last = req.chain[req.chain.length - 1];
+    const poly = shapePolygon(last.shape, frame.origin[0] + last.xy[0], frame.origin[1] + last.xy[1], last.rotDeg);
+    const bottomZ = src.mode === 'generic' ? 0 : src.sculptTrimZ;
+    const mt = materialThickness(src.sculpt, src.bins, poly, bottomZ);
+    if (!mt.stats) return null;
+    return { minTop: mt.stats.minTop, maxTop: mt.stats.maxTop, maxBottom: mt.stats.maxBottom, thickness: mt.thickness, misses: mt.stats.misses, carved: src.mode === 'generic' && mt.flatBottom, covered: mt.stats.misses === 0, hollow: mt.stats.misses === 0 && mt.stats.maxBottom - bottomZ > 0.3 };
   },
 
   async autoMagnets(req) {
@@ -237,7 +354,7 @@ function exportable(item: ExportItem): ExportablePiece {
   const slots = item.magnets ? magnetSlotSpecs(item.magnets.sizing, item.magnets.slots).map((sl) => ({ ...sl, x: sl.x * scale, y: sl.y * scale })) : [];
   const last = item.chain[item.chain.length - 1];
   const shape = { kind: last.shape.kind, w: r.size.w, d: r.size.d };
-  const tiltDeg = ps.tiltDeg ?? autoTiltDeg(shape);
+  const tiltDeg = ps.tiltDeg ?? autoTiltDeg(shape, last.profile);
   const { edgeSpacing, spacing } = densitySpacing(Math.max(r.size.w, r.size.d), ps.density);
   const res = presupport({ body, sculpt, bottom: r.outline.bottom, slots, underside: r.underside }, { tiltDeg, standoff: ps.standoff, tipDiameter: ps.tipDiameter, spacing, edgeSpacing, bracing: ps.bracing });
   return { name: item.name, body: res.body, sculpt: res.sculpt, supports: res.supports };

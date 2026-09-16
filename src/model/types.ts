@@ -1,3 +1,4 @@
+import type { StudioDocument } from '@/kernel/studio/document';
 /**
  * Project data model for Base-ifier: sources, the piece tree, and per-project
  * settings. Builds only on kernel geometry types — must not import from
@@ -86,6 +87,9 @@ export interface Source {
   stats: SourceStats;
   /** The root Piece for this source (whole, uncut) */
   rootPieceId: string;
+  /** where the scene came from: an STL file (default) or a Base Studio bake */
+  origin?: 'file' | 'studio';
+  studioId?: string;
 }
 
 /** What the user is making. Decides what can be placed on the big base and how deep it nests. */
@@ -128,8 +132,22 @@ export interface Piece {
   profile?: EdgeProfile;
   /** default 'base' */
   role?: PieceRole;
+  /** 'full' (default) cuts the whole column out of the scene; 'plug' takes only the top `plugDepth` and the scene keeps a socket */
+  cut?: 'full' | 'plug';
+  /** mm; undefined = project default */
+  plugDepth?: number;
+  /** mm per side; undefined = project default */
+  plugClearance?: number;
   magnets: { mode: 'auto' | 'manual'; slots: MagnetSlot[] };
   children: string[];
+}
+
+/** Defaults for plug cuts. */
+export interface PlugSettings {
+  /** how much terrain a plug base takes with it, measured from the lowest point over its footprint, mm */
+  depth: number;
+  /** gap between the plug and its socket, per side, mm */
+  clearance: number;
 }
 
 /** The underside of every base: hollow with a brim (default) or a solid plate. */
@@ -155,6 +173,9 @@ export interface Project {
   magnet: MagnetSettings;
   export: ExportSettings;
   underside: UndersideSettings;
+  plug: PlugSettings;
+  /** Base Studio scenes, by document id (saved with the project so they can be re-opened and re-baked) */
+  studio?: Record<string, StudioDocument>;
   /** edge profile given to newly added bases when their size preset does not imply one */
   defaultProfile: EdgeProfile;
   /** what the user is making; default 'multibase' */

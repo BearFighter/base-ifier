@@ -1,10 +1,11 @@
+import type { StudioDocument } from '@/kernel/studio/document';
 /**
  * Shape of the zustand app store. UI components and the cutter overlay code
  * against this interface; `src/state/project.ts` implements it.
  */
 import type { EdgeProfile, Shape, Vec2 } from '@/kernel/types';
-import type { MagnetSettings, ExportSettings, MagnetSlot, Piece, PieceRole, Project, WorkMode, UndersideSettings } from '@/model/types';
-import type { PieceGeometryTransfer, SourceSummary } from '@/worker/api';
+import type { MagnetSettings, ExportSettings, MagnetSlot, Piece, PieceRole, Project, WorkMode, UndersideSettings, PlugSettings } from '@/model/types';
+import type { PieceGeometryTransfer, SourceSummary, ColumnInfo } from '@/worker/api';
 
 export type ViewMode = 'top' | 'orbit' | 'underside';
 /** 'layout' = place pieces on the selected base/piece (default); 'magnets' = edit magnet slots. */
@@ -20,6 +21,9 @@ export interface SourceState {
   fileSize: number;
   /** the File object, kept so the geometry engine can be reloaded after a restart */
   file?: File;
+  /** where the scene came from: an STL file (default) or a Base Studio bake */
+  origin?: 'file' | 'studio';
+  studioId?: string;
 }
 
 export interface GeometryState {
@@ -50,6 +54,8 @@ export interface ViewState {
   confirmDelete: string | null;
   /** the optional account sign-in dialog */
   showSignIn?: boolean;
+  /** which side of the app is on screen: the cutter or Base Studio */
+  surface?: 'cutter' | 'studio';
   /** base (source) awaiting removal confirmation */
   confirmRemoveSource: string | null;
   /** which left-hand tab is open */
@@ -60,6 +66,8 @@ export interface AppState {
   project: Project;
   sources: Record<string, SourceState>;
   geometry: Record<string, GeometryState>;
+  /** what lies under each placed base (terrain thickness), fetched before Base-ify so the app can offer plug cuts */
+  terrain: Record<string, ColumnInfo>;
   view: ViewState;
   /** number of geometry computations currently running or queued */
   busy: number;
@@ -89,7 +97,7 @@ export interface AppActions {
   baseify(): Promise<void>;
   /** step through the previewed bases */
   previewStep(delta: number): void;
-  updatePiece(id: string, patch: Partial<Pick<Piece, 'name' | 'shape' | 'xy' | 'rotDeg' | 'edges' | 'profile'>>): void;
+  updatePiece(id: string, patch: Partial<Pick<Piece, 'name' | 'shape' | 'xy' | 'rotDeg' | 'edges' | 'profile' | 'cut' | 'plugDepth' | 'plugClearance'>>): void;
   /** edge profile for bases added from now on (also applied when a size preset implies none) */
   setDefaultProfile(profile: EdgeProfile): void;
   /** delete immediately when the piece has no children, otherwise ask for confirmation */
@@ -108,6 +116,10 @@ export interface AppActions {
   setMagnetSettings(patch: Partial<MagnetSettings>): void;
   /** hollow/solid underside, brim, rings, watermark; recomputes every base when Base-ified */
   setUndersideSettings(patch: Partial<UndersideSettings>): void;
+  /** project defaults for plug cuts */
+  setPlugSettings(patch: Partial<PlugSettings>): void;
+  /** measure the terrain under a base (cheap; cached per piece geometry) */
+  fetchTerrainInfo(id: string): Promise<void>;
   setExportSettings(patch: Partial<ExportSettings>): void;
 
   // view / tools
@@ -129,6 +141,15 @@ export interface AppActions {
   // persistence
   saveProjectFile(): void;
   loadProjectFile(file: File): Promise<void>;
+
+  // Base Studio
+  /** register a source the worker already holds (studio bakes); updates an existing one in place */
+  registerPreparedSource(id: string, name: string, summary: SourceSummary, opts: { origin: 'file' | 'studio'; studioId?: string; file?: File }): Promise<void>;
+  /** keep a studio document in the project (saved with it) */
+  saveStudioDocument(doc: StudioDocument): void;
+  /** open Base Studio on an existing document, the scene behind a studio source, or a new scene */
+  openStudio(opts?: { docId?: string; sourceId?: string }): void;
+  closeStudio(): void;
   clearError(): void;
 }
 

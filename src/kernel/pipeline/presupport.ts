@@ -17,7 +17,7 @@
  * face at z = 0, footprint centred on the origin). The output is in "print"
  * space: Z up, build plate at z = 0, everything above it.
  */
-import type { Bounds3, MagnetSlotSpec, Polygon2, Soup, Vec2, Vec3 } from '../types';
+import type { Bounds3, EdgeProfile, MagnetSlotSpec, Polygon2, Soup, Vec2, Vec3 } from '../types';
 import { SoupBuilder } from '../types';
 import { insetConvex } from '../geom2d/offset';
 import { pointInConvexPolygon, polygonBounds, polygonCentroid } from '../geom2d/polygon';
@@ -114,8 +114,13 @@ export const DEFAULT_PRESUPPORT: PresupportOptions = {
   railDiameter: 1.2,
 };
 
-/** Research default: rounds/ovals 35°, rectangles 45°, the largest rectangles 55°. */
-export function autoTiltDeg(shape: { kind: 'rect' | 'ellipse'; w: number; d: number }): number {
+/**
+ * Research default: rounds/ovals 35°, rectangles 45°, the largest rectangles 55°.
+ * Flat-sided (Kings of War style) bases are not tilted at all: their square corners
+ * broke on tilted prints, and a flat-on-supports print keeps every edge crisp.
+ */
+export function autoTiltDeg(shape: { kind: 'rect' | 'ellipse'; w: number; d: number }, profile?: EdgeProfile): number {
+  if (profile && profile.kind === 'inset' && profile.inset === 0) return 0;
   if (shape.kind === 'ellipse') return 35;
   return Math.max(shape.w, shape.d) >= 100 ? 55 : 45;
 }

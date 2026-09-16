@@ -124,3 +124,32 @@
 .modal .field input { padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.18); background: rgba(0, 0, 0, 0.25); color: inherit; }
 .modal .error { color: #ff9a8a; }
 .modal .muted a { color: inherit; }
+
+/* Base Studio */
+.studio-shell .app-center { position: relative; }
+.studio-viewport { position: relative; flex: 1; min-height: 0; }
+/* the r3f host inside .studio-viewport: absolute so it has a definite size to measure */
+.studio-canvas-host { position: absolute; inset: 0; }
+.studio-viewport canvas { display: block; }
+.studio-hud { position: absolute; top: 8px; left: 8px; display: flex; gap: 6px; z-index: 2; }
+.studio-hud button { font-size: 12px; padding: 4px 9px; }
+.studio-warn { position: absolute; bottom: 8px; left: 8px; right: 8px; font-size: 12px; color: #ffd08a; background: rgba(0, 0, 0, 0.45); padding: 4px 8px; border-radius: 6px; pointer-events: none; }
+.studio-tabs { display: flex; gap: 4px; padding: 8px 10px 0; }
+.studio-tabs button { flex: 1; font-size: 13px; padding: 6px 4px; }
+.studio-panel { padding: 10px; overflow: auto; min-height: 0; }
+.preset-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin: 6px 0 10px; }
+.preset-grid button { text-align: left; padding: 6px 8px; font-size: 12px; border-radius: 6px; cursor: pointer; }
+.preset-grid button small { display: block; opacity: 0.7; font-size: 11px; margin-top: 2px; font-weight: normal; }
+.studio-entry { margin: 10px 0 12px; padding: 10px; border: 1px dashed rgba(120, 90, 40, 0.5); border-radius: 8px; }
+.studio-entry p { margin: 4px 0 8px; font-size: 12px; }
+.studio-entry ul { margin: 8px 0 0; padding-left: 16px; font-size: 12px; }
+button.link { background: none; border: none; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+.range-row { display: flex; align-items: center; gap: 8px; }
+.range-row input[type='range'] { flex: 1; min-width: 0; }
+.range-row output { width: 44px; text-align: right; font-size: 12px; opacity: 0.8; }
+.prop-list { margin: 6px 0; padding: 0; list-style: none; font-size: 12px; max-height: 180px; overflow: auto; }
+.prop-list li { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.prop-list li span { flex: 1; }
+
+.callout { margin: 8px 0; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255, 179, 71, 0.6); background: rgba(255, 179, 71, 0.1); font-size: 13px; line-height: 1.4; }
+.callout button { margin-top: 6px; }

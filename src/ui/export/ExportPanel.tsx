@@ -7,6 +7,7 @@ import { autoTiltDeg, estimatePrintHeight } from '@/kernel/pipeline/presupport';
 
 export function ExportPanel() {
   const exportSettings = useAppStore((s) => s.project.export);
+  const defaultProfile = useAppStore((s) => s.project.defaultProfile);
   const setExportSettings = useAppStore((s) => s.setExportSettings);
   const selectedId = useAppStore((s) => s.project.selectedId);
   const piece = useAppStore((s) => (selectedId ? (s.project.pieces[selectedId] ?? null) : null));
@@ -34,10 +35,10 @@ export function ExportPanel() {
   let printLine: string | null = null;
   if (data && piece && ps.enabled) {
     const kind = piece.shape.kind;
-    const tilt = ps.tiltDeg ?? autoTiltDeg({ kind, w: data.size.w, d: data.size.d });
+    const tilt = ps.tiltDeg ?? autoTiltDeg({ kind, w: data.size.w, d: data.size.d }, piece.parentId === null ? undefined : (piece.profile ?? defaultProfile));
     const partH = data.bounds.max[2] - data.bounds.min[2];
     const h = estimatePrintHeight(data.size, partH, tilt, ps.standoff);
-    printLine = `tilted ${tilt}°, about ${Math.round(h)} mm tall, standing ${ps.standoff} mm above the plate on supports`;
+    printLine = tilt === 0 ? `flat on its supports (flat-sided bases are not tilted), about ${Math.round(h)} mm tall, ${ps.standoff} mm above the plate` : `tilted ${tilt}°, about ${Math.round(h)} mm tall, standing ${ps.standoff} mm above the plate on supports`;
   }
   const setPs = (patch: Partial<typeof ps>) => setExportSettings({ presupport: { ...ps, ...patch } });
 

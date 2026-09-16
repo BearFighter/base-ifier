@@ -1,5 +1,5 @@
 /** Right-column panel: view/edit the selected piece. */
-import React from 'react';
+import React, { useEffect } from 'react';
 import type { EdgeTreatment, Shape } from '@/kernel/types';
 import { PROFILE_CHOICES, profileId } from '@/model/defaults';
 import { pieceSize } from '@/model/tree';
@@ -11,6 +11,65 @@ import { formatMm } from '@/ui/util/format';
 
 function edgeLabels(kind: Shape['kind']): string[] {
   return kind === 'rect' ? ['Front (bottom edge in the Top view)', 'Right', 'Back (top edge in the Top view)', 'Left'] : ['Edge'];
+}
+
+/** Full cut or plug: how much of the scene this base takes with it. */
+function CutSection({
+  piece,
+  terrain,
+  plugDefaults,
+  workMode,
+  parentName,
+  onChange,
+}: {
+  piece: { cut?: 'full' | 'plug'; plugDepth?: number; plugClearance?: number };
+  terrain: { thickness: number; minTop: number; maxTop: number; carved: boolean; covered: boolean; hollow: boolean } | undefined;
+  plugDefaults: { depth: number; clearance: number };
+  workMode: string;
+  parentName: string;
+  onChange: (patch: { cut?: 'full' | 'plug'; plugDepth?: number; plugClearance?: number }) => void;
+}) {
+  const cut = piece.cut ?? 'full';
+  const depth = piece.plugDepth ?? plugDefaults.depth;
+  const clearance = piece.plugClearance ?? plugDefaults.clearance;
+  const tall = terrain && terrain.thickness > 5;
+  const offer = cut === 'full' && tall && terrain.covered;
+  return (
+    <Details summary={cut === 'plug' ? `Cut: plug, ${depth} mm deep` : 'Cut: full base'} defaultOpen={offer}>
+      <div className="button-group" role="group" aria-label="Cut style">
+        <button type="button" className={cut === 'full' ? 'active' : ''} onClick={() => onChange({ cut: 'full' })} title="Take the whole column of the scene under this base">Full base</button>
+        <button type="button" className={cut === 'plug' ? 'active' : ''} onClick={() => onChange({ cut: 'plug' })} title="Take only the top of the terrain; the scene keeps a socket the base drops back into">Plug</button>
+      </div>
+      {offer && (
+        <div className="callout">
+          The scene is {terrain!.thickness.toFixed(1)} mm thick under this base. Cut it as a plug so {parentName} keeps a socket and the base drops back in: a tank with a squad on top, a dragon fight that is also a legal troop.
+          <div><button type="button" className="primary" onClick={() => onChange({ cut: 'plug' })}>Make it a plug</button></div>
+        </div>
+      )}
+      {cut === 'full' && !offer && (
+        <Hint>{terrain ? (terrain.carved ? `Carved straight out of the object (${terrain.thickness.toFixed(1)} mm thick here); no plate is added underneath.` : terrain.hollow ? 'The object is hollow under this base: at Base-ify a plate is added that reaches up to the material above it, so nothing floats.' : `A plate is added under this base at Base-ify.`) : 'The whole column under this base becomes the base.'}</Hint>
+      )}
+      {cut === 'plug' && (
+        <>
+          <Hint>The base takes the top of the terrain with it and the scene keeps a matching socket. Depth is measured from the lowest point of the terrain over the base, so the plug is at least that thick everywhere; the underside is hollowed like any other base.</Hint>
+          <div className="field-row two">
+            <label className="field">
+              <span>Plug depth (mm)</span>
+              <input type="number" step={0.5} min={2.8} max={30} value={depth} onChange={(e) => { const v = Number(e.target.value); if (v >= 2.8 && v <= 30) onChange({ plugDepth: v }); }} />
+            </label>
+            <label className="field">
+              <span>Socket play per side (mm)</span>
+              <input type="number" step={0.05} min={0} max={1} value={clearance} onChange={(e) => { const v = Number(e.target.value); if (v >= 0 && v <= 1) onChange({ plugClearance: v }); }} title="Resin prints need 0.15-0.3 mm of clearance for a drop-in fit" />
+            </label>
+          </div>
+          {terrain && !terrain.covered && <Hint>This base overhangs the object. A plug needs solid material under its whole footprint, so it will be cut as a full base on a plate and the object keeps a hole instead of a socket. Move it fully onto the object for a plug.</Hint>}
+          {terrain && terrain.covered && terrain.thickness < depth && <Hint>Only {terrain.thickness.toFixed(1)} mm of terrain here: the plug will be that deep instead.</Hint>}
+          {terrain && terrain.covered && terrain.hollow && <Hint>The object is hollow under this base. Backing is added by default: the plug gets a plate that fills it up to the material above, and the socket gets a floor and walls so the plug has something to sit in.</Hint>}
+          {workMode !== 'diorama' && <Hint>The socket is kept by the rest of the scene, which is only exported in Diorama mode. In other modes this base is still cut as a plug, but nothing keeps its socket.</Hint>}
+        </>
+      )}
+    </Details>
+  );
 }
 
 function EdgeRow({
@@ -63,6 +122,15 @@ export function PiecePanel() {
   const geom = useAppStore((s) => (selectedId ? s.geometry[selectedId] : undefined));
   const updatePiece = useAppStore((s) => s.updatePiece);
   const defaultProfile = useAppStore((s) => s.project.defaultProfile);
+  const plugDefaults = useAppStore((s) => s.project.plug);
+  const workMode = useAppStore((s) => s.project.mode);
+  const terrain = useAppStore((s) => (selectedId ? s.terrain[selectedId] : undefined));
+  const fetchTerrainInfo = useAppStore((s) => s.fetchTerrainInfo);
+  const sizeKey = piece ? `${piece.shape.kind}|${piece.shape.w}|${piece.shape.d}|${piece.xy[0]}|${piece.xy[1]}|${piece.rotDeg}` : '';
+  useEffect(() => {
+    if (piece && piece.parentId !== null && piece.role !== 'frame') void fetchTerrainInfo(piece.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [piece?.id, sizeKey]);
 
   if (!piece) {
     return (
@@ -164,6 +232,10 @@ export function PiecePanel() {
           </div>
         </div>
       </Details>
+
+      {!isRoot && piece.role !== 'frame' && (
+        <CutSection piece={piece} terrain={terrain} plugDefaults={plugDefaults} workMode={workMode} parentName={parent?.name ?? 'the scene'} onChange={(patch) => updatePiece(piece.id, patch)} />
+      )}
 
       {!isRoot && (
         <Details summary="Edge shape">

@@ -93,7 +93,7 @@ export function prepareSource(raw: Soup, name: string, opts: PrepareOptions = {}
     bodyH > 1 && bodyH < 6 &&
     Math.abs(bodyW - rawW) < 0.5 && Math.abs(bodyD - rawD) < 0.5;
   const mode: 'twoShell' | 'generic' = twoShell ? 'twoShell' : 'generic';
-  if (!twoShell) warnings.push('Could not identify a separate body shell; using generic mode (geometry below the plate top is replaced by a solid plinth).');
+  if (!twoShell) warnings.push('No separate base plate found: treating the file as a solid object. Bases are carved out of it, and only get a plate under them where it is thin.');
 
   // measured footprint (of the body in two-shell mode, else of the whole mesh)
   const measW = twoShell ? bodyW : rawW;
@@ -147,26 +147,29 @@ export function prepareSource(raw: Soup, name: string, opts: PrepareOptions = {}
     if (bottom.length < 3) {
       bottom = [[b.min[0], b.min[1]], [b.max[0], b.min[1]], [b.max[0], b.max[1]], [b.min[0], b.max[1]]];
     }
-    const plateTop = detectPlateTop(all) ?? 3;
-    const ts = opts.genericTopScale ?? 0.92;
-    const c = polygonCentroid(bottom);
-    const top = scalePolygonAbout(bottom, ts, ts, c[0], c[1]);
-    const bb = polygonBounds(bottom);
-    outline = { bottom, top, plateTop, topScale: [ts, ts], zMin: 0, zMax: plateTop };
-    void bb;
+    // object mode: the whole mesh is the sculpt and there is no plate. Bases cut from it are
+    // carved out of the object itself (or get a plate under them where the object is thin).
+    outline = { bottom, top: bottom.slice(), plateTop: 0, topScale: [1, 1], zMin: 0, zMax: b.max[2] };
+    void detectPlateTop; void polygonCentroid; void scalePolygonAbout; void polygonBounds; void opts.genericTopScale;
     sculptRaw = all;
   }
   progress('trim', 0.5);
 
-  // trim + weld + bin the sculpt
-  const sculptTrimZ = outline.plateTop - overlap;
+  // two-shell: trim the sculpt just below the plate top, weld and bin it; object mode keeps every triangle
+  const sculptTrimZ = twoShell ? outline.plateTop - overlap : -Infinity;
   let sculptMesh0: IndexedMesh | null = weld(sculptRaw!);
   sculptRaw = null; // release the soup copy before trimming allocates
-  const trimmed = trimAbove(sculptMesh0, sculptTrimZ);
-  sculptMesh0 = null;
-  warnings.push(...trimmed.warnings);
-  const sculpt = weld(trimmed.soup);
-  trimmed.soup = { positions: new Float32Array(0), triCount: 0 };
+  let sculpt: IndexedMesh;
+  if (twoShell) {
+    const trimmed = trimAbove(sculptMesh0, sculptTrimZ);
+    sculptMesh0 = null;
+    warnings.push(...trimmed.warnings);
+    sculpt = weld(trimmed.soup);
+    trimmed.soup = { positions: new Float32Array(0), triCount: 0 };
+  } else {
+    sculpt = sculptMesh0;
+    sculptMesh0 = null;
+  }
   timings.trim = now() - t0; t0 = now();
   progress('bins', 0.8);
   const bins = buildBins(sculpt, opts.binSize ?? 2);

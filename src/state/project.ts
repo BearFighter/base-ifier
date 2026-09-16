@@ -1,3 +1,6 @@
+import { newStudioDocument } from '@/kernel/studio/document';
+import type { StudioDocument } from '@/kernel/studio/document';
+import { useStudioStore } from '@/studio/store';
 /**
  * The application's zustand store: implements `AppStore` from ./types by
  * wiring the project/tree model (src/model/*) to the geometry worker
@@ -7,7 +10,7 @@ import * as Comlink from 'comlink';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
-import { defaultEdges, newId, newProject, defaultExportSettings, defaultUndersideSettings } from '@/model/defaults';
+import { defaultEdges, newId, newProject, defaultExportSettings, defaultUndersideSettings, defaultPlugSettings } from '@/model/defaults';
 import { descendants, leaves, pieceSize } from '@/model/tree';
 import type { MagnetSlot, Piece, Project, Source, SourceNormalization, SourceStats, PieceRole } from '@/model/types';
 import { downloadBlob } from '@/ui/util/download';
@@ -116,6 +119,7 @@ export const useAppStore = create<AppStore>()(
       project: newProject(),
       sources: {},
       geometry: {},
+      terrain: {},
       view: { mode: 'top', showSculpt: true, tool: 'layout', drafts: [], activeDraftId: null, showHelp: true, confirmDelete: null, confirmRemoveSource: null, leftTab: 'base' },
       busy: 0,
       baseified: false,
@@ -147,60 +151,7 @@ export const useAppStore = create<AppStore>()(
             `Loading ${file.name}`,
           );
 
-          const fileKey = { hash: `${file.name}:${file.size}`, size: file.size };
-          const normalization: SourceNormalization = {
-            mode: summary.mode,
-            plateTop: summary.outline.plateTop,
-            topScale: summary.outline.topScale,
-            sculptMargin: 0.1,
-            measuredScale: summary.measuredScale,
-          };
-          const stats: SourceStats = {
-            tris: summary.stats.tris,
-            components: summary.stats.components,
-            nonManifoldEdges: summary.stats.nonManifoldEdges,
-            boundaryEdges: summary.stats.boundaryEdges,
-            bounds: summary.stats.bounds,
-          };
-          const rootId = newId('pc');
-          const rootPiece: Piece = {
-            id: rootId,
-            sourceId: id,
-            parentId: null,
-            name: stripExt(file.name),
-            shape: summary.nominal,
-            xy: [0, 0],
-            rotDeg: 0,
-            edges: [],
-            magnets: { mode: 'auto', slots: [] },
-            children: [],
-          };
-          const source: Source = {
-            id,
-            name: file.name,
-            fileKey,
-            nominal: summary.nominal,
-            normalization,
-            stats,
-            rootPieceId: rootId,
-          };
-
-          set((s) => {
-            const src = s.sources[id];
-            if (src) {
-              src.status = 'ready';
-              src.summary = summary;
-              delete src.progress;
-              delete src.error;
-            }
-            s.project.sources[id] = source;
-            s.project.pieces[rootId] = rootPiece;
-            s.project.selectedId = rootId;
-            s.view.drafts = [];
-            s.view.activeDraftId = null;
-          });
-
-          await get().recomputeSubtree(rootId);
+          await get().registerPreparedSource(id, file.name, summary, { origin: 'file', file });
           return id;
         } catch (err) {
           const message = errorMessage(err);
@@ -214,6 +165,71 @@ export const useAppStore = create<AppStore>()(
           });
           return null;
         }
+      },
+
+      async registerPreparedSource(id, name, summary, opts) {
+        const normalization: SourceNormalization = {
+          mode: summary.mode,
+          plateTop: summary.outline.plateTop,
+          topScale: summary.outline.topScale,
+          sculptMargin: 0.1,
+          measuredScale: summary.measuredScale,
+        };
+        const stats: SourceStats = {
+          tris: summary.stats.tris,
+          components: summary.stats.components,
+          nonManifoldEdges: summary.stats.nonManifoldEdges,
+          boundaryEdges: summary.stats.boundaryEdges,
+          bounds: summary.stats.bounds,
+        };
+        const existing = get().project.sources[id];
+        const rootId = existing?.rootPieceId ?? newId('pc');
+        const fileKey = opts.file ? { hash: `${opts.file.name}:${opts.file.size}`, size: opts.file.size } : { hash: `${opts.origin}:${opts.studioId ?? id}:${summary.stats.tris}`, size: 0 };
+        set((s) => {
+          s.sources[id] = { status: 'ready', fileName: name, fileSize: opts.file?.size ?? 0, summary, file: opts.file, origin: opts.origin, studioId: opts.studioId };
+          const source: Source = { id, name, fileKey, nominal: summary.nominal, normalization, stats, rootPieceId: rootId, origin: opts.origin, studioId: opts.studioId };
+          s.project.sources[id] = source;
+          const root = s.project.pieces[rootId];
+          if (root) {
+            root.shape = summary.nominal;
+            root.name = stripExt(name);
+          } else {
+            s.project.pieces[rootId] = { id: rootId, sourceId: id, parentId: null, name: stripExt(name), shape: summary.nominal, xy: [0, 0], rotDeg: 0, edges: [], magnets: { mode: 'auto', slots: [] }, children: [] };
+          }
+          s.project.selectedId = rootId;
+          s.view.drafts = [];
+          s.view.activeDraftId = null;
+          s.baseified = false;
+          s.previewIds = [];
+          for (const gid of Object.keys(s.geometry)) if (s.project.pieces[gid]?.sourceId === id) delete s.geometry[gid];
+        });
+        await get().recomputeSubtree(rootId);
+      },
+
+      saveStudioDocument(doc) {
+        set((s) => {
+          if (!s.project.studio) s.project.studio = {};
+          s.project.studio[doc.id] = doc;
+        });
+      },
+
+      openStudio(opts) {
+        const state = get();
+        let doc: StudioDocument | undefined;
+        if (opts?.docId) doc = state.project.studio?.[opts.docId];
+        else if (opts?.sourceId) {
+          const sid = state.project.sources[opts.sourceId]?.studioId;
+          doc = sid ? state.project.studio?.[sid] : undefined;
+        }
+        if (!doc) doc = newStudioDocument();
+        get().saveStudioDocument(doc);
+        set((s) => { s.view.surface = 'studio'; });
+        useStudioStore.getState().open(doc);
+      },
+
+      closeStudio() {
+        useStudioStore.getState().close();
+        set((s) => { s.view.surface = 'cutter'; });
       },
 
       removeSource(id) {
@@ -396,9 +412,16 @@ export const useAppStore = create<AppStore>()(
             for (const cid of root.children.slice()) {
               if (get().project.pieces[cid]?.role === 'leftover') get().removePiece(cid);
             }
+            if (src.normalization.mode === 'generic') {
+              // an object scene: the remainder is the whole object with the bases' pockets and holes cut into it
+              const id = newId('pc');
+              const lp: Piece = { id, sourceId: root.sourceId, parentId: root.id, name: `Rest of ${root.name}`, shape: { ...root.shape }, xy: [0, 0], rotDeg: 0, edges: defaultEdges(root.shape), profile: { kind: 'inset', inset: 0, height: 3 }, role: 'leftover', magnets: { mode: 'manual', slots: [] }, children: [] };
+              set((s) => { s.project.pieces[id] = lp; s.project.pieces[root.id]?.children.push(id); });
+              continue;
+            }
             const rw = root.shape.w * src.normalization.topScale[0] - 2 * USABLE_INSET;
             const rd = root.shape.d * src.normalization.topScale[1] - 2 * USABLE_INSET;
-            const occupied = get().project.pieces[src.rootPieceId]!.children.map((cid) => {
+            const occupied = get().project.pieces[src.rootPieceId]!.children.filter((cid) => get().project.pieces[cid]?.cut !== 'plug').map((cid) => {
               const c = get().project.pieces[cid]!;
               const sz = pieceSize(c);
               return { x: c.xy[0] - sz.w / 2 + rw / 2, y: c.xy[1] - sz.d / 2 + rd / 2, w: sz.w, h: sz.d };
@@ -449,9 +472,12 @@ export const useAppStore = create<AppStore>()(
           if (patch.rotDeg !== undefined) piece.rotDeg = patch.rotDeg;
           if (patch.edges !== undefined) piece.edges = patch.edges;
           if (patch.profile !== undefined) piece.profile = patch.profile;
+          if (patch.cut !== undefined) piece.cut = patch.cut;
+          if (patch.plugDepth !== undefined) piece.plugDepth = patch.plugDepth;
+          if (patch.plugClearance !== undefined) piece.plugClearance = patch.plugClearance;
         });
         // a rename does not change geometry; anything else makes the last Base-ify stale
-        if (patch.shape !== undefined || patch.xy !== undefined || patch.rotDeg !== undefined || patch.edges !== undefined || patch.profile !== undefined) {
+        if (patch.shape !== undefined || patch.xy !== undefined || patch.rotDeg !== undefined || patch.edges !== undefined || patch.profile !== undefined || patch.cut !== undefined || patch.plugDepth !== undefined || patch.plugClearance !== undefined) {
           set((s) => { s.baseified = false; s.previewIds = []; });
         }
       },
@@ -470,6 +496,7 @@ export const useAppStore = create<AppStore>()(
           for (const rid of removedIds) {
             delete s.project.pieces[rid];
             delete s.geometry[rid];
+            delete s.terrain[rid];
           }
           if (parentId !== null) {
             const parent = s.project.pieces[parentId];
@@ -509,6 +536,26 @@ export const useAppStore = create<AppStore>()(
         set((s) => {
           Object.assign(s.project.export, patch);
         });
+      },
+
+      setPlugSettings(patch) {
+        set((s) => {
+          Object.assign(s.project.plug, patch);
+          s.baseified = false;
+          s.previewIds = [];
+        });
+      },
+
+      async fetchTerrainInfo(id) {
+        const state = get();
+        const piece = state.project.pieces[id];
+        if (!piece || piece.parentId === null || piece.role === 'frame') return;
+        try {
+          const info = await kernel().columnInfo({ sourceId: piece.sourceId, chain: chainFor(state.project, id) });
+          set((s) => { if (info) s.terrain[id] = info; else delete s.terrain[id]; });
+        } catch {
+          /* not loaded yet */
+        }
       },
 
       setUndersideSettings(patch) {
@@ -668,7 +715,7 @@ export const useAppStore = create<AppStore>()(
         }
         const prevSources = get().sources;
         set((s) => {
-          s.project = { ...project, export: { ...defaultExportSettings(), ...project.export, presupport: { ...defaultExportSettings().presupport, ...(project.export?.presupport ?? {}) } }, underside: { ...defaultUndersideSettings(), ...(project.underside ?? {}) } };
+          s.project = { ...project, export: { ...defaultExportSettings(), ...project.export, presupport: { ...defaultExportSettings().presupport, ...(project.export?.presupport ?? {}) } }, underside: { ...defaultUndersideSettings(), ...(project.underside ?? {}) }, plug: { ...defaultPlugSettings(), ...(project.plug ?? {}) }, studio: project.studio ?? {} };
           s.geometry = {};
           s.view = { mode: 'top', showSculpt: true, tool: 'layout', drafts: [], activeDraftId: null, showHelp: s.view.showHelp, confirmDelete: null, confirmRemoveSource: null, leftTab: 'bases' };
           if (!s.project.mode) s.project.mode = 'multibase';

@@ -22,6 +22,19 @@ the repository) but works on any base whose file name encodes its size.
     sculpt is cut only along the cutter's own edges; edges inherited from the
     parent keep the parent's sculpt boundary (cutting again along an inherited
     edge grazes the sculpt's wall and explodes into slivers).
+  - `pipeline/plug.ts` + `sculpt/height.ts` — single-shell files are treated as solid
+    objects (no plate invented, and nothing is cut until Base-ify). A base cut from one is
+    carved out of the object itself when the material is thick enough and flat underneath,
+    with the hollow underside built into its floor; anything else gets a plate under the
+    slice. A plug cut takes only the top few millimetres and the object keeps a socket
+    (pocket) the plug drops back into; a plug needs solid material under its whole
+    footprint, otherwise it becomes a full base on a plate and the object keeps a hole.
+    In Diorama mode an object scene leaves ONE remainder piece — the object with a pocket
+    per plug and a hole per full base — instead of rectangular leftovers. Where the object
+    is hollow under the footprint (a shell), the plug is backed by a plate that reaches up
+    to the material and the socket gets a 1.2 mm cup (floor slab plus walls) to sit in;
+    a full cut over the same spot gets a plate tall enough to reach the floating material,
+    with nothing lifted. Flat-sided (Kings of War) bases export print-ready without a tilt.
   - `body/buildBody.ts` + `body/hollow.ts` — by default a hollow underside: a
     2 mm void inside a 2 mm solid brim (only the brim is the seating surface),
     magnet locating rings hanging from the void ceiling, and a raised 5x7-pixel

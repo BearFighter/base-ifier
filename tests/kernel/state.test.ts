@@ -81,16 +81,17 @@ describe('state/chain: chainFor', () => {
   it('returns a single-node chain for the root piece', () => {
     const p = buildProject();
     const chain = chainFor(p, 'root1');
-    expect(chain).toEqual([
-      { id: 'root1', shape: { kind: 'rect', w: 100, d: 100 }, xy: [0, 0], rotDeg: 0, edges: p.pieces.root1.edges, role: 'base' },
-    ]);
+    expect(chain.length).toBe(1);
+    expect(chain[0]).toMatchObject({ id: 'root1', shape: { kind: 'rect', w: 100, d: 100 }, xy: [0, 0], rotDeg: 0, edges: p.pieces.root1.edges, role: 'base', cut: 'full' });
+    expect(chain[0].plugDepth).toBe(4);
+    expect(chain[0].plugClearance).toBe(0.2);
   });
 
   it('returns the ancestor chain root-first, ending with the piece itself', () => {
     const p = buildProject();
     const chain = chainFor(p, 'b1');
     expect(chain.map((n) => n.id)).toEqual(['root1', 'a1', 'b1']);
-    expect(chain[1]).toEqual({
+    expect(chain[1]).toMatchObject({
       id: 'a1',
       shape: { kind: 'rect', w: 40, d: 30 },
       xy: [10, 5],
@@ -99,7 +100,7 @@ describe('state/chain: chainFor', () => {
       role: 'base',
       profile: p.pieces.a1.profile ?? p.defaultProfile,
     });
-    expect(chain[2]).toEqual({
+    expect(chain[2]).toMatchObject({
       id: 'b1',
       shape: { kind: 'ellipse', w: 20, d: 20 },
       xy: [-3, 2],

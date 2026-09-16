@@ -14,6 +14,11 @@ import { buildBody } from '../body/buildBody';
 import type { HollowSpec } from '../body/hollow';
 import { checkMagnetSlots } from '../body/magnetSlots';
 import { cutPrism } from '../sculpt/cutPrism';
+import { cutColumnAbove, carveSockets, plugFloor, materialThickness } from './plug';
+import type { SocketSpec } from './plug';
+import { addRing, addWatermark, placeWatermark, ringFor, MIN_CEILING } from '../body/hollow';
+import type { KeepOutCircle } from '../body/hollow';
+import { SoupBuilder } from '../types';
 import { transformSoup } from '../mesh/transform';
 import { signedVolume } from '../mesh/volume';
 import { boundsOfPositions, boundsOfSoup } from '../mesh/bbox';
@@ -30,6 +35,12 @@ export interface PieceParams {
   profile?: EdgeProfile;
   /** a 'frame' is a reference outline: bases inside it are clipped to its footprint, not to a plate top */
   role?: 'base' | 'frame' | 'leftover';
+  /** 'full' (default) takes the whole column; 'plug' takes only the top `plugDepth` and the terrain keeps a socket */
+  cut?: 'full' | 'plug';
+  plugDepth?: number;
+  plugClearance?: number;
+  /** pockets left by plug bases inside this piece's footprint (source frame) */
+  sockets?: SocketSpec[];
 }
 
 /** Children are placed at least this far inside their parent's plate top, so their cuts never graze the parent's cut faces. */
@@ -84,6 +95,8 @@ export interface PieceResult {
   timings: Record<string, number>;
   /** the hollow underside actually built (local frame): void outline, depth, whether the watermark fit */
   underside?: { rim: Polygon2; depth: number; watermark: boolean };
+  /** set when the base was carved out of the object itself (no plate): its floor in the source frame and its thinnest material */
+  carved?: { floorZ: number; thickness: number; plug: boolean };
 }
 
 /** Frame of the source itself (used as the parent of root pieces). */
@@ -169,8 +182,76 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     usable: usableS.length >= 3 ? usableS : topS,
   };
   if (!isRoot && frame.sculptPoly.length < 3) frame.sculptPoly = insetConvex(topS, sculptMargin);
-  // sculpt sits on the plate: shift it if this base's plate is a different height from the file's
-  const zShift = plateTopSource - source.outline.plateTop;
+  // --- how this base is built: on the file's plate (two-shell), carved out of the object, or on a new plate
+  const objectMode = source.mode === 'generic';
+  // the remainder of an object scene: the object itself with the bases' pockets and holes cut into it
+  const objectRemainder = objectMode && !isRoot && params.role === 'leftover';
+  const isPlug = !isRoot && params.role !== 'frame' && params.cut === 'plug';
+  let carvedInfo: PieceResult['carved'];
+  let hollowCap: { void: Polygon2; depth: number } | null = null;
+  // a slice of the object standing on a plate: `floorZ` is where the slice starts in the source, `lift` how far
+  // it is raised onto the plate (0 when the plate instead reaches up to material that floats above the floor)
+  let slice: { floorZ: number; lift: number; plateTop: number } | null = null;
+  if (!isRoot && params.role !== 'frame' && !objectRemainder) {
+    const needed = opts.hollow ? opts.hollow.depth + MIN_CEILING : 1;
+    if (isPlug) {
+      const depth = Math.max(needed, params.plugDepth ?? 4);
+      // two-shell files have no sculpt below the plate top: a plug can only go down to the trim plane
+      const bottomZ = objectMode ? 0 : source.sculptTrimZ;
+      const pf = plugFloor(source.sculpt, source.bins, bottomS, depth, bottomZ);
+      if (pf.stats === null || pf.stats.misses > 0) {
+        warnings.push('This base overhangs the object: a plug needs solid material under its whole footprint. It is cut as a full base on a plate instead, and the object keeps a hole where it was.');
+      } else if (pf.stats.maxBottom > pf.floorZ + 0.05) {
+        // hollow underneath (a shell): back the plug with a plate that reaches up to the skin
+        warnings.push('The object is hollow under this base: a backing plate fills the plug, and the socket gets a floor and walls of its own.');
+        slice = { floorZ: pf.floorZ, lift: 0, plateTop: Math.max(needed, pf.stats.maxBottom - pf.floorZ + 0.2) };
+        carvedInfo = { floorZ: pf.floorZ, thickness: slice.plateTop, plug: true };
+      } else {
+        if (pf.thickness < depth - 1e-6) warnings.push(`The terrain here is only ${pf.thickness.toFixed(1)} mm thick; the plug is shallower than asked.`);
+        carvedInfo = { floorZ: pf.floorZ, thickness: pf.thickness, plug: true };
+      }
+    } else if (objectMode) {
+      const mt = materialThickness(source.sculpt, source.bins, bottomS, 0);
+      if (mt.stats && mt.thickness >= needed && mt.flatBottom) carvedInfo = { floorZ: 0.05, thickness: mt.thickness - 0.05, plug: false };
+      else if (mt.stats && mt.stats.misses === 0 && mt.stats.maxBottom > 0.3) {
+        // material floating above the bottom (a hollow shell): the plate reaches up to it instead of lifting it
+        warnings.push('The object is hollow under this base: the plate is made tall enough to back the material above it.');
+        slice = { floorZ: 0, lift: 0, plateTop: Math.max(3, mt.stats.maxBottom + 0.2) };
+      } else if (mt.stats && !mt.flatBottom) warnings.push('The object is not flat underneath here; a plate is added below it, expect small gaps.');
+    }
+    if (carvedInfo && opts.hollow) {
+      const rimPoly = insetConvex(bottomS, opts.hollow.rim);
+      if (carvedInfo.thickness >= opts.hollow.depth + MIN_CEILING && rimPoly.length >= 3 && polygonArea(rimPoly) >= 20) hollowCap = { void: rimPoly, depth: opts.hollow.depth };
+      else warnings.push('Too thin to hollow: this base is left solid.');
+    }
+    if (carvedInfo && params.role !== 'leftover' && profile.kind === 'inset' && profile.inset > 0) warnings.push('Edge slope is not applied to bases carved out of an object; their sides are straight.');
+  }
+  if (slice) {
+    // a plate under (or up to) a slice of the object
+    topS = bottomS;
+    plateTopSource = slice.plateTop;
+    frame.outline = { bottom: bottomS, top: topS, plateTop: plateTopSource };
+    frame.sculptPoly = bottomS;
+  } else if (carvedInfo) {
+    // a carved base is the material itself: its outline is the footprint, its "plate top" its thinnest material
+    topS = bottomS;
+    plateTopSource = carvedInfo.thickness;
+    frame.outline = { bottom: bottomS, top: topS, plateTop: plateTopSource };
+    frame.sculptPoly = bottomS;
+  } else if (objectRemainder) {
+    // the remainder is the object: its own footprint, no plate, nothing lifted
+    topS = bottomS;
+    plateTopSource = 0;
+    frame.outline = { bottom: bottomS, top: topS, plateTop: 0 };
+    frame.sculptPoly = source.outline.bottom;
+  } else if (objectMode && !isRoot && plateTopSource < 1) {
+    // a plate under a thin object: give it a real height
+    plateTopSource = 3;
+    frame.outline = { bottom: bottomS, top: topS, plateTop: plateTopSource };
+  }
+  // sculpt sits on the plate: shift it if this base's plate is a different height from the file's;
+  // a carved base is shifted so its floor becomes z = 0
+  const zShift = slice ? slice.lift - slice.floorZ : carvedInfo ? -carvedInfo.floorZ : plateTopSource - source.outline.plateTop;
   timings.outline = now() - t0; t0 = now();
 
   // --- local frame + output sizing
@@ -192,10 +273,39 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   const slots = (opts.magnetSlots ?? []).map((s) => ({ ...s, x: s.x * scale, y: s.y * scale }));
   if (opts.magnetCheck && slots.length && !opts.hollow) warnings.push(...checkMagnetSlots(outline, slots, opts.magnetCheck));
 
-  // --- body
-  const bodyRes = buildBody(outline, slots, opts.hollow);
-  warnings.push(...bodyRes.warnings);
-  const body = bodyRes.soup;
+  // --- body: the plate (with its hollow underside), or for carved bases only the rings + watermark
+  let body: Soup;
+  let underside: PieceResult['underside'];
+  if ((isRoot || objectRemainder) && objectMode) {
+    body = { positions: new Float32Array(0), triCount: 0 };
+  } else if (carvedInfo && !slice) {
+    const out = new SoupBuilder(256);
+    if (hollowCap && opts.hollow) {
+      const local = translatePolygon(hollowCap.void, -origin[0], -origin[1]);
+      const voidL = scale !== 1 ? scalePolygonAbout(local, scale, scale, 0, 0) : local;
+      const d = hollowCap.depth;
+      const keepOut: KeepOutCircle[] = [];
+      for (const slot of slots) {
+        const r = ringFor(slot, voidL, opts.hollow);
+        if ('reason' in r) { warnings.push(r.reason); continue; }
+        addRing(out, slot.x, slot.y, r.ri, r.ro, d - opts.hollow.ringHeight, d + 0.1, slot.sides);
+        keepOut.push({ x: slot.x, y: slot.y, r: r.ro });
+      }
+      let watermark = false;
+      const text = opts.hollow.watermark.trim();
+      if (text && opts.hollow.watermarkHeight > 0) {
+        const place = placeWatermark(voidL, text, keepOut);
+        if (place) { addWatermark(out, text, place, d, Math.min(opts.hollow.watermarkHeight, d - 0.2)); watermark = true; }
+      }
+      underside = { rim: voidL, depth: d, watermark };
+    }
+    body = out.build();
+  } else {
+    const bodyRes = buildBody(outline, slots, opts.hollow);
+    warnings.push(...bodyRes.warnings);
+    body = bodyRes.soup;
+    underside = bodyRes.underside;
+  }
   timings.body = now() - t0; t0 = now();
 
   // --- sculpt
@@ -207,12 +317,26 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   } else if (rootUntouched) {
     sculpt = { positions: new Float32Array(0), triCount: 0 };
     sculptMesh = source.sculpt;
-  } else if (isRoot) {
+  } else if (isRoot || objectRemainder) {
     sculpt = meshToSoup(source.sculpt);
+  } else if (slice && slice.floorZ > 0) {
+    const col = cutColumnAbove(source.sculpt, source.bins, bottomS, slice.floorZ, { stamp: opts.stamp });
+    warnings.push(...col.warnings.map((w) => 'sculpt: ' + w));
+    sculpt = col.soup;
+  } else if (carvedInfo) {
+    const col = cutColumnAbove(source.sculpt, source.bins, bottomS, carvedInfo.floorZ, { stamp: opts.stamp, hollow: hollowCap ?? undefined });
+    warnings.push(...col.warnings.map((w) => 'sculpt: ' + w));
+    sculpt = col.soup;
   } else {
     const cut = cutPrism(source.sculpt, source.bins, frame.sculptPoly, { stamp: opts.stamp });
     warnings.push(...cut.warnings.map((w) => 'sculpt: ' + w));
     sculpt = cut.soup;
+  }
+  // pockets left by plug bases inside this piece (leftover terrain): carve them before moving to the local frame
+  if (params.sockets && params.sockets.length && sculpt.triCount > 0) {
+    const r = carveSockets(sculpt, objectRemainder ? source.outline.bottom : carvedInfo ? bottomS : frame.sculptPoly, params.sockets);
+    warnings.push(...r.warnings.map((w) => 'socket: ' + w));
+    sculpt = r.soup;
   }
   if (sculpt.triCount > 0) {
     sculpt = transformSoup(sculpt, { translate: [-origin[0], -origin[1], zShift] }, true);
@@ -249,7 +373,8 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     bounds,
     size,
     timings,
-    underside: bodyRes.underside,
+    underside,
+    carved: carvedInfo,
   };
 }
 

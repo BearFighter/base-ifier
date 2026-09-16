@@ -3,6 +3,7 @@
  * Everything crossing the boundary is plain data; Float32Arrays are transferred.
  */
 import type { Bounds3, EdgeProfile, EdgeTreatment, Shape, Vec2 } from '@/kernel/types';
+import type { StudioDocument, StudioProp } from '@/kernel/studio/document';
 
 export interface OutlineTransfer {
   bottom: Vec2[];
@@ -31,6 +32,17 @@ export interface SourceSummary {
 }
 
 /** One node of the ancestor chain, root first. The root node has xy [0,0] and the source's nominal shape. */
+/** A plug base whose socket this piece must keep: its footprint in the shared parent frame. */
+export interface SocketRequest {
+  shape: Shape;
+  xy: Vec2;
+  rotDeg: number;
+  plugDepth: number;
+  clearance: number;
+  /** the base is a plug (pocket); otherwise it took the whole column (hole through) */
+  plug: boolean;
+}
+
 export interface PieceChainNode {
   id: string;
   shape: Shape;
@@ -40,6 +52,29 @@ export interface PieceChainNode {
   /** edge profile; omitted = the file's original slope */
   profile?: EdgeProfile;
   role?: 'base' | 'frame' | 'leftover';
+  /** 'full' (default) takes the whole column; 'plug' takes the top `plugDepth` and the terrain keeps a socket */
+  cut?: 'full' | 'plug';
+  plugDepth?: number;
+  plugClearance?: number;
+  /** plug bases inside this piece's footprint whose sockets it keeps */
+  sockets?: SocketRequest[];
+}
+
+/** What is under a base footprint: material thickness from the object's bottom, and terrain heights. */
+export interface ColumnInfo {
+  minTop: number;
+  maxTop: number;
+  maxBottom: number;
+  /** material from the bottom to the lowest terrain point over the footprint, mm */
+  thickness: number;
+  /** grid points over the footprint that hit nothing (holes) */
+  misses: number;
+  /** whether a full cut would be carved out of the object (no plate under it) */
+  carved: boolean;
+  /** the whole footprint sits on solid material (a plug needs this) */
+  covered: boolean;
+  /** the material under the footprint stops above the bottom somewhere (a shell): backing is added */
+  hollow: boolean;
 }
 
 export interface MagnetRequest {
@@ -94,6 +129,8 @@ export interface MeshTransfer {
 }
 
 export interface PieceGeometryTransfer {
+  /** set when the base was carved out of the object (no plate): floor height in the source and thinnest material */
+  carved?: { floorZ: number; thickness: number; plug: boolean };
   pieceId: string;
   /** piece origin in the source frame */
   origin: Vec2;
@@ -133,14 +170,54 @@ export interface ExportItem extends ComputeRequest {
 
 export type ProgressCallback = (stage: string, fraction: number) => void;
 
+/** A bundled or imported prop handed to the worker as glb bytes (geometry only is enough). */
+export interface StudioAssetTransfer {
+  id: string;
+  family: string;
+  /** glb file contents; parsed in the worker with src/assets/glb.ts */
+  glb: ArrayBuffer;
+  /** glTF is metres and Y-up by default; the core pack is already mm and Y-up */
+  scale?: number;
+}
+
+export interface StudioAssetInfo {
+  id: string;
+  family: string;
+  footprintRadius: number;
+  height: number;
+  tris: number;
+  /** a closed surface (no open edges); open scans are reported but never scattered or placed */
+  closed: boolean;
+}
+
+/** What the studio viewport draws: the ground and all props as flat triangle soups (positions only). */
+export interface StudioPreviewTransfer {
+  ground: MeshTransfer;
+  props: MeshTransfer;
+  bounds: Bounds3;
+  propCount: number;
+  warnings: string[];
+  timings: Record<string, number>;
+}
+
 export interface KernelApi {
   /** `onProgress` must be a separate argument (Comlink proxies only top-level function arguments). */
   loadSource(id: string, name: string, buffer: ArrayBuffer, opts?: { nominal?: Shape }, onProgress?: ProgressCallback): Promise<SourceSummary>;
   unloadSource(id: string): Promise<void>;
   computePiece(req: ComputeRequest): Promise<PieceGeometryTransfer>;
+  /** terrain under a base: thickness and heights over its footprint (cheap; used before Base-ify to offer plug cuts) */
+  columnInfo(req: { sourceId: string; chain: PieceChainNode[] }): Promise<ColumnInfo | null>;
   /** suggested magnet positions (piece-local) for the piece described by the chain */
   autoMagnets(req: { sourceId: string; chain: PieceChainNode[]; radius: number; minWall: number }): Promise<Vec2[]>;
   exportPiece(item: ExportItem): Promise<ArrayBuffer>;
+  /** Base Studio: parse and cache prop assets (bundled CC0 pack, imports) */
+  registerStudioAssets(assets: StudioAssetTransfer[]): Promise<StudioAssetInfo[]>;
+  /** Base Studio: re-roll the scattered props of a document */
+  scatterStudio(doc: StudioDocument): Promise<StudioProp[]>;
+  /** Base Studio: ground + props meshes for the studio viewport (no weld/bins) */
+  previewStudio(doc: StudioDocument): Promise<StudioPreviewTransfer>;
+  /** Base Studio: bake the document into a source the cutter can use, registered under `id` */
+  bakeStudio(id: string, doc: StudioDocument): Promise<SourceSummary>;
   exportPlate(items: ExportItem[], gap: number): Promise<ArrayBuffer>;
   /** zip of one STL per item, file names "<name>.stl" */
   exportZip(items: ExportItem[]): Promise<ArrayBuffer>;
