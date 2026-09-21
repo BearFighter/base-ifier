@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 import * as Comlink from 'comlink';
-import { bakeStudio as bakeStudioScene, buildGround, heightCapWarnings, placeProp, previewCell, scatterScene } from '../kernel/studio/bake';
+import { bakeStudio as bakeStudioScene, buildGround, groundClip, heightCapWarnings, placeProp, previewCell, scatterScene } from '../kernel/studio/bake';
 import type { PropSource } from '../kernel/studio/bake';
 import { heightfieldToSlab } from '../kernel/terrain/mesh';
 import type { Prop } from '../kernel/props/prop';
@@ -9,7 +9,7 @@ import { weld } from '../kernel/mesh/weld';
 import { manifoldReport } from '../kernel/mesh/validate';
 import { concatSoups } from '../kernel/types';
 import type { StudioDocument } from '../kernel/studio/document';
-import type { StudioAssetInfo, StudioAssetTransfer, StudioPreviewTransfer } from './api';
+import type { StudioAssetInfo, StudioAssetTransfer, StudioPlacement, StudioPreviewTransfer, StudioPropRange } from './api';
 import { presupport, autoTiltDeg, densitySpacing } from '../kernel/pipeline/presupport';
 import type { ExportablePiece } from '../kernel/pipeline/exportPiece';
 import { zipSync } from 'fflate';
@@ -230,10 +230,14 @@ const api: KernelApi = {
     const t0 = performance.now();
     const hf = buildGround(doc, previewCell(doc));
     const tGround = performance.now() - t0;
-    const slab = heightfieldToSlab(hf, { zBase: doc.board.plateTop - 0.1 });
+    // the same cut as the finished scene, or a round board would show as a square (groundClip)
+    const slab = heightfieldToSlab(hf, { zBase: doc.board.plateTop - 0.1, clipTo: groundClip(doc) });
     const warnings: string[] = [...heightCapWarnings(doc)];
     const missing = new Set<string>();
     const propSoups = [];
+    const propRanges: StudioPropRange[] = [];
+    const placements: StudioPlacement[] = [];
+    let tri = 0;
     for (const p of doc.props) {
       const prop = previewSource.get(p.assetId);
       if (!prop) {
@@ -244,14 +248,18 @@ const api: KernelApi = {
         }
         continue;
       }
-      propSoups.push(placeProp(prop, p, hf, doc.rules.sink, doc.board.plateTop));
+      const placed = placeProp(prop, p, hf, doc.rules.sink, doc.board.plateTop);
+      propSoups.push(placed.soup);
+      propRanges.push({ id: p.id, start: tri, count: placed.soup.triCount });
+      placements.push({ id: p.id, x: placed.x, y: placed.y, z: placed.z, rotDeg: p.rotDeg, scale: p.scale });
+      tri += placed.soup.triCount;
     }
     const props = propSoups.length ? concatSoups(propSoups) : { positions: new Float32Array(0), triCount: 0 };
     const all = concatSoups([slab, props]);
     const bounds = boundsOfSoup(all);
     const ground: MeshTransfer = { positions: slab.positions.slice(0, slab.triCount * 9), triCount: slab.triCount };
     const propsT: MeshTransfer = { positions: props.positions.slice(0, props.triCount * 9), triCount: props.triCount };
-    const out: StudioPreviewTransfer = { ground, props: propsT, bounds, propCount: propSoups.length, warnings, timings: { ground: tGround, total: performance.now() - t0 } };
+    const out: StudioPreviewTransfer = { ground, props: propsT, propRanges, placements, bounds, propCount: propSoups.length, warnings, timings: { ground: tGround, total: performance.now() - t0 } };
     return Comlink.transfer(out, [ground.positions.buffer as ArrayBuffer, propsT.positions.buffer as ArrayBuffer]);
   },
 

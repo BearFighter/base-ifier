@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import type { DragEvent } from 'react';
 import { useAppStore } from '@/state/project';
 import { useStudioStore } from '@/studio/store';
-import type { StudioTab } from '@/studio/store';
+import type { StudioTab, TransformMode } from '@/studio/store';
 import { Field, Section, Details } from '@/ui/common/Field';
 import { Hint } from '@/ui/common/Hint';
 import { BOARD_PRESETS, boardMargin, studioId } from '@/kernel/studio/document';
@@ -38,6 +38,34 @@ function RangeRow({ value, min, max, step, onChange, format }: { value: number; 
       <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
       <output>{format ? format(value) : value}</output>
     </div>
+  );
+}
+
+/**
+ * One number with its own name, unit and explanation. Every number the user can
+ * change says what it is: the old rows of bare boxes left people guessing.
+ */
+function NumberField({ label, unit, help, value, min, max, step, onChange }: {
+  label: string;
+  unit: string;
+  help: string;
+  value: number;
+  min?: number;
+  max?: number;
+  step: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <Field label={label} unit={unit} help={help}>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={Math.round(value * 1000) / 1000}
+        onChange={(e) => { const v = Number(e.target.value); onChange(Number.isFinite(v) ? v : value); }}
+      />
+    </Field>
   );
 }
 
@@ -156,15 +184,23 @@ function GroundPanel() {
             Add
           </button>
         </div>
-        <ul className="prop-list">
+        <ul className="card-list">
           {doc.ground.stamps.map((s) => (
-            <li key={s.id}>
-              <span>{STAMP_CHOICES.find((c) => c.id === s.stamp)?.label ?? s.stamp}</span>
-              <input type="number" title="x, mm" step={1} value={s.x} style={{ width: 52 }} onChange={(e) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.x = Number(e.target.value) || 0; })} />
-              <input type="number" title="y, mm" step={1} value={s.y} style={{ width: 52 }} onChange={(e) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.y = Number(e.target.value) || 0; })} />
-              <input type="number" title="size, mm" step={1} min={2} value={s.size} style={{ width: 52 }} onChange={(e) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.size = Math.max(2, Number(e.target.value) || 2); })} />
-              <input type="number" title="height, mm" step={0.1} min={0} max={5} value={s.strength} style={{ width: 52 }} onChange={(e) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.strength = Math.max(0, Number(e.target.value) || 0); })} />
-              <button type="button" className="icon-button" title="Remove" onClick={() => update((d) => { d.ground.stamps = d.ground.stamps.filter((q) => q.id !== s.id); })}>×</button>
+            <li key={s.id} className="card-item">
+              <div className="card-head">
+                <span className="card-name">{STAMP_CHOICES.find((c) => c.id === s.stamp)?.label ?? s.stamp}</span>
+                <button type="button" className="icon-button" title="Take this pattern off the ground" onClick={() => update((d) => { d.ground.stamps = d.ground.stamps.filter((q) => q.id !== s.id); })}>×</button>
+              </div>
+              <div className="field-grid">
+                <NumberField label="Left / right" unit="mm" step={1} value={s.x} help="Where it sits across the board. 0 is the middle; a bigger number moves it right."
+                  onChange={(v) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.x = v; })} />
+                <NumberField label="Front / back" unit="mm" step={1} value={s.y} help="Where it sits up the board. 0 is the middle; a bigger number moves it towards the back."
+                  onChange={(v) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.y = v; })} />
+                <NumberField label="Size" unit="mm" step={1} min={2} value={s.size} help="How wide a patch of ground the pattern covers."
+                  onChange={(v) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.size = Math.max(2, v); })} />
+                <NumberField label="Height" unit="mm" step={0.1} min={0} max={5} value={s.strength} help="How far the pattern stands up out of the ground."
+                  onChange={(v) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.strength = Math.max(0, Math.min(5, v)); })} />
+              </div>
             </li>
           ))}
         </ul>
@@ -319,6 +355,10 @@ function PropsPanel() {
   const registerLibraryFiles = useStudioStore((s) => s.registerLibraryFiles);
   const libraryBusy = useStudioStore((s) => s.libraryBusy);
   const assetInfo = useStudioStore((s) => s.assetInfo);
+  const select = useStudioStore((s) => s.select);
+  const setTransformMode = useStudioStore((s) => s.setTransformMode);
+  const removeProp = useStudioStore((s) => s.removeProp);
+  const selectedId = useStudioStore((s) => s.selectedPropId);
   const scattered = doc.props.filter((p) => p.scattered).length;
   const placed = doc.props.filter((p) => !p.scattered);
   const preset = genrePreset(doc.ground.presetId);
@@ -383,7 +423,9 @@ function PropsPanel() {
         )}
       </Section>
 
-      <Section title="Placed by hand" subtitle="Props you add yourself never move when the board, the ground or the scatter settings change.">
+      <SelectedPropSection />
+
+      <Section title="Placed by hand" subtitle="Props you put down yourself never move when the board, the ground or the scatter settings change.">
         {usable.length === 0 ? (
           <div className="muted">Add your STL props above first.</div>
         ) : (
@@ -391,34 +433,78 @@ function PropsPanel() {
             <select id="studio-prop-pick" defaultValue={usable[0]?.id ?? ''}>
               {usable.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
             </select>
-            <button type="button" onClick={() => {
+            <button type="button" title="Puts one down in the middle of the board and picks it up, ready to drag" onClick={() => {
               const pick = (document.getElementById('studio-prop-pick') as HTMLSelectElement | null)?.value;
               const item = usable.find((it) => it.id === pick) ?? usable[0];
               if (!item) return;
+              const id = studioId('pr');
               update((d) => {
-                d.props.push({ id: studioId('pr'), assetId: item.id, x: 0, y: 0, rotDeg: 0, scale: 1, sink: 0, seed: (Date.now() % 1e9) >>> 0, licence: item.licence, scattered: false });
+                d.props.push({ id, assetId: item.id, x: 0, y: 0, rotDeg: 0, scale: 1, sink: 0, seed: (Date.now() % 1e9) >>> 0, licence: item.licence, scattered: false });
               });
+              select(id);
+              setTransformMode('move');
             }}>
               Add at centre
             </button>
           </div>
         )}
-        <ul className="prop-list">
+        <ul className="card-list">
           {placed.map((p) => (
-            <li key={p.id}>
-              <span>{names.get(p.assetId) ?? 'missing prop'}</span>
-              <input type="number" title="x, mm" step={1} value={p.x} style={{ width: 52 }} onChange={(e) => update((d) => { const t = d.props.find((q) => q.id === p.id); if (t) t.x = Number(e.target.value) || 0; })} />
-              <input type="number" title="y, mm" step={1} value={p.y} style={{ width: 52 }} onChange={(e) => update((d) => { const t = d.props.find((q) => q.id === p.id); if (t) t.y = Number(e.target.value) || 0; })} />
-              <input type="number" title="turn, degrees" step={15} value={p.rotDeg} style={{ width: 52 }} onChange={(e) => update((d) => { const t = d.props.find((q) => q.id === p.id); if (t) t.rotDeg = Number(e.target.value) || 0; })} />
-              <input type="number" title="size, ×" step={0.1} min={0.1} value={p.scale} style={{ width: 52 }} onChange={(e) => update((d) => { const t = d.props.find((q) => q.id === p.id); if (t) t.scale = Math.max(0.1, Number(e.target.value) || 1); })} />
-              <button type="button" className="icon-button" title="Remove" onClick={() => update((d) => { d.props = d.props.filter((q) => q.id !== p.id); })}>×</button>
+            <li key={p.id} className={`card-item card-row${p.id === selectedId ? ' selected' : ''}`}>
+              <span className="card-name">{names.get(p.assetId) ?? 'missing prop'}</span>
+              <span className="muted">{Math.round(p.x)}, {Math.round(p.y)} mm</span>
+              <button type="button" title="Picks this one up in the view so you can drag it or set its numbers" onClick={() => select(p.id)}>
+                {p.id === selectedId ? 'Picked up' : 'Select'}
+              </button>
+              <button type="button" className="icon-button" title="Take this prop off the board" onClick={() => removeProp(p.id)}>×</button>
             </li>
           ))}
         </ul>
-        {placed.length === 0 && usable.length > 0 && <div className="muted">Nothing placed by hand yet.</div>}
+        {placed.length === 0 && usable.length > 0 && <div className="muted">Nothing placed by hand yet. Click a prop in the view to pick it up, or add one here.</div>}
       </Section>
       <div className="muted">{doc.props.length} props on the board</div>
     </div>
+  );
+}
+
+/**
+ * The prop the user has picked up, with every number named. Shown for a prop
+ * picked in the view as well as one placed by hand: touching any of these makes
+ * it the user's, so placing the others again leaves it alone.
+ */
+function SelectedPropSection() {
+  const doc = useDoc();
+  const id = useStudioStore((s) => s.selectedPropId);
+  const editProp = useStudioStore((s) => s.editProp);
+  const removeProp = useStudioStore((s) => s.removeProp);
+  const sceneSink = doc.rules.sink;
+  const prop = id ? doc.props.find((p) => p.id === id) : undefined;
+  if (!id || !prop) return null;
+  const name = doc.library.find((it) => it.id === prop.assetId)?.name ?? 'This prop';
+  return (
+    <Section title="Selected prop" subtitle={`${name} — drag it in the view, or set its numbers here.`}>
+      <div className="field-grid">
+        <NumberField label="Left / right" unit="mm" step={1} value={prop.x} help="Where it sits across the board. 0 is the middle; a bigger number moves it to the right."
+          onChange={(v) => editProp(id, { x: v })} />
+        <NumberField label="Front / back" unit="mm" step={1} value={prop.y} help="Where it sits up the board. 0 is the middle; a bigger number moves it towards the back."
+          onChange={(v) => editProp(id, { y: v })} />
+        <NumberField label="Turn" unit="degrees" step={15} value={prop.rotDeg} help="How far it is turned on the spot. 90 is a quarter turn anticlockwise."
+          onChange={(v) => editProp(id, { rotDeg: v })} />
+        <NumberField label="Size" unit="×" step={0.05} min={0.1} max={10} value={prop.scale} help="1 is the STL's own size, 2 is twice as big, 0.5 is half."
+          onChange={(v) => editProp(id, { scale: v })} />
+        <NumberField label="Bury" unit="mm" step={0.1} min={0} max={20} value={prop.sink} help={`How much deeper this one goes into the ground than the rest (the scene buries everything ${sceneSink} mm on the Rules tab).`}
+          onChange={(v) => editProp(id, { sink: v })} />
+      </div>
+      <Hint>
+        {prop.scattered
+          ? 'Placed for you: it moves when the props are placed again. Drag it or change a number and it stays where you left it.'
+          : 'This prop is yours: placing the others again never moves it.'}
+        {' '}It always sits on the ground — its height is worked out from the ground under it.
+      </Hint>
+      <div className="button-row">
+        <button type="button" title="Take this prop off the board" onClick={() => removeProp(id)}>Remove this prop</button>
+      </div>
+    </Section>
   );
 }
 
@@ -486,6 +572,13 @@ const TABS: { id: StudioTab; label: string }[] = [
   { id: 'rules', label: 'Rules' },
 ];
 
+/** What the handle on the selected prop does, and the key that switches to it. */
+const HANDLE_MODES: { id: TransformMode; label: string; key: string; help: string }[] = [
+  { id: 'move', label: 'Move', key: 'g', help: 'Drag the arrows to slide the selected prop over the ground' },
+  { id: 'turn', label: 'Turn', key: 'r', help: 'Drag the ring to turn the selected prop' },
+  { id: 'size', label: 'Size', key: 's', help: 'Drag the handle to make the selected prop bigger or smaller' },
+];
+
 export function StudioApp() {
   const doc = useStudioStore((s) => s.doc);
   const tab = useStudioStore((s) => s.tab);
@@ -502,6 +595,15 @@ export function StudioApp() {
   const notice = useStudioStore((s) => s.notice);
   const error = useStudioStore((s) => s.error);
   const useScene = useStudioStore((s) => s.useScene);
+  const selectedId = useStudioStore((s) => s.selectedPropId);
+  const selectedName = useStudioStore((s) => {
+    const p = s.doc?.props.find((q) => q.id === s.selectedPropId);
+    return p ? s.doc?.library.find((it) => it.id === p.assetId)?.name ?? 'a prop' : null;
+  });
+  const transformMode = useStudioStore((s) => s.transformMode);
+  const setTransformMode = useStudioStore((s) => s.setTransformMode);
+  const select = useStudioStore((s) => s.select);
+  const removeProp = useStudioStore((s) => s.removeProp);
   const closeStudio = useAppStore((s) => s.closeStudio);
   const showHelp = useAppStore((s) => s.view.showHelp);
   const setView = useAppStore((s) => s.setView);
@@ -522,14 +624,26 @@ export function StudioApp() {
   }
 
   useEffect(() => {
+    function typing(t: EventTarget | null): boolean {
+      return t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement;
+    }
     function onKey(e: KeyboardEvent) {
-      if (!(e.ctrlKey || e.metaKey) || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
-      if (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
+      if (typing(e.target)) return;
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+        if (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
+        return;
+      }
+      if (e.altKey) return;
+      const id = useStudioStore.getState().selectedPropId;
+      if (e.key === 'Escape') { e.preventDefault(); select(null); return; }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && id) { e.preventDefault(); removeProp(id); return; }
+      const mode = HANDLE_MODES.find((m) => m.key === e.key.toLowerCase());
+      if (mode) { e.preventDefault(); setTransformMode(mode.id); }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [undo, redo]);
+  }, [undo, redo, select, removeProp, setTransformMode]);
 
   if (!doc) return null;
 
@@ -571,6 +685,14 @@ export function StudioApp() {
           <div className="studio-hud">
             <button type="button" className={viewMode === 'top' ? 'active' : ''} title="Look straight down at the board" onClick={() => setViewMode('top')}>Top</button>
             <button type="button" className={viewMode === 'orbit' ? 'active' : ''} title="Turn the board around to look at it from the side" onClick={() => setViewMode('orbit')}>3D</button>
+            <span className="hud-gap" />
+            {HANDLE_MODES.map((m) => (
+              <button key={m.id} type="button" className={transformMode === m.id ? 'active' : ''} title={`${m.help} (${m.key.toUpperCase()})`} onClick={() => setTransformMode(m.id)}>
+                {m.label}
+              </button>
+            ))}
+            <button type="button" disabled={!selectedId} title="Take the selected prop off the board (Delete)" onClick={() => { if (selectedId) removeProp(selectedId); }}>Remove</button>
+            <span className="hud-gap" />
             <button type="button" disabled={!canUndo} onClick={() => undo()} title="Take back the last change (Ctrl+Z)">↶ Undo</button>
             <button type="button" disabled={!canRedo} onClick={() => redo()} title="Put back the change you just took back (Ctrl+Y)">↷ Redo</button>
           </div>
@@ -586,6 +708,8 @@ export function StudioApp() {
                   <button type="button" className="notice-undo" title="Puts the props back the way they were and takes back the change" onClick={() => undo()}>Undo</button>
                 )}
               </span>
+            ) : selectedId && selectedName ? (
+              <span>Selected: {selectedName} · drag it in the view, or use the numbers on the Props tab</span>
             ) : previewing ? 'Updating the preview…' : preview ? `${preview.propCount} props · ${doc.board.shape.w} × ${doc.board.shape.d} mm` : 'Building the preview…'}
           </div>
           <button type="button" className="baseify" disabled={baking} onClick={() => void useScene()} title="Turns the ground and props into a base you can cut from, and takes you to the Bases screen">
@@ -596,7 +720,7 @@ export function StudioApp() {
 
       <footer className="app-status">
         <div className="status-left">
-          <span className="muted">Scroll to zoom, drag to turn the 3D view. Every base cut from this scene keeps the same underside and magnets as an STL.</span>
+          <span className="muted">Scroll to zoom, drag to turn the 3D view. Click a prop to pick it up, then drag its handle — G slides it, R turns it, S resizes it, Delete takes it off, Esc puts it down.</span>
         </div>
       </footer>
 

@@ -51,6 +51,7 @@
     { "system": "40k", "name": "40mm round", "shape": "round", "w": 40, "d": 40, "use": "heavy infantry, Terminators", "notes": "" },
     { "system": "40k", "name": "50mm round", "shape": "round", "w": 50, "d": 50, "use": "bikes, bulky characters", "notes": "" },
     { "system": "40k", "name": "60mm round", "shape": "round", "w": 60, "d": 60, "use": "Dreadnought-class", "notes": "" },
+    { "system": "40k", "name": "65mm round", "shape": "round", "w": 65, "d": 65, "use": "big characters and small monsters", "notes": "Mostly an Age of Sigmar size, but it turns up on kit-supplied bases in both games." },
     { "system": "40k", "name": "80mm round", "shape": "round", "w": 80, "d": 80, "use": "large monsters", "notes": "" },
     { "system": "40k", "name": "90mm round", "shape": "round", "w": 90, "d": 90, "use": "kit-only, not sold separately", "notes": "" },
     { "system": "40k", "name": "100mm round", "shape": "round", "w": 100, "d": 100, "use": "Knights, big monsters", "notes": "" },
@@ -62,7 +63,9 @@
     { "system": "40k", "name": "90x52mm oval", "shape": "oval", "w": 90, "d": 52, "use": "cavalry, larger bikes", "notes": "" },
     { "system": "40k", "name": "105x70mm oval", "shape": "oval", "w": 105, "d": 70, "use": "larger creatures/vehicles", "notes": "" },
     { "system": "40k", "name": "120x92mm oval", "shape": "oval", "w": 120, "d": 92, "use": "large vehicles/monsters, also flying base", "notes": "" },
-    { "system": "40k", "name": "170x105mm oval", "shape": "oval", "w": 170, "d": 105, "use": "Imperial Knights", "notes": "Community also lists 170x109mm." },
+    { "system": "40k", "name": "150x95mm oval", "shape": "oval", "w": 150, "d": 95, "use": "very large monsters and flyers", "notes": "" },
+    { "system": "40k", "name": "170x105mm oval", "shape": "oval", "w": 170, "d": 105, "use": "Imperial Knights", "notes": "Measured size of the GW base. The same base is widely quoted as 170x109mm; both figures are in circulation, so it is listed twice." },
+    { "system": "40k", "name": "170x109mm oval", "shape": "oval", "w": 170, "d": 109, "use": "Imperial Knights", "notes": "The widely quoted community figure for the Knight base; measured GW bases come out at 170x105mm. Both sizes are in circulation — pick the one your model actually sits on." },
 
     { "system": "old-world", "name": "25mm square", "shape": "square", "w": 25, "d": 25, "use": "regular infantry, most heroes, war-machine crew", "notes": "" },
     { "system": "old-world", "name": "30mm square", "shape": "square", "w": 30, "d": 30, "use": "heavy/non-human infantry: Chaos Warriors, Orcs, Bestigors, Dryads", "notes": "" },

@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { newStudioDocument } from '@/kernel/studio/document';
-import type { StudioDocument, StudioLibraryItem } from '@/kernel/studio/document';
-import { bakeStudio, buildGround, effectiveHeightCap, scatterScene, NO_ASSETS, PROP_SCALE_RANGE } from '@/kernel/studio/bake';
+import type { StudioDocument, StudioLibraryItem, StudioProp } from '@/kernel/studio/document';
+import { bakeStudio, buildGround, clampPropToBoard, effectiveHeightCap, groundClip, placeProp, previewCell, propClearance, scatterScene, NO_ASSETS, PROP_SCALE_RANGE } from '@/kernel/studio/bake';
 import type { PropSource } from '@/kernel/studio/bake';
+import { heightfieldToSlab } from '@/kernel/terrain/mesh';
 import type { Prop } from '@/kernel/props/prop';
 import { computePiece, sourceFrame, rootPieceParams } from '@/kernel/pipeline/computePiece';
 import { magnetSlotSpecs } from '@/kernel/body/magnetSlots';
@@ -10,8 +11,9 @@ import { addBox, DEFAULT_HOLLOW } from '@/kernel/body/hollow';
 import { presupport } from '@/kernel/pipeline/presupport';
 import { isWatertight } from '@/kernel/mesh/validate';
 import { boundsOfSoup } from '@/kernel/mesh/bbox';
-import { sampleHeight } from '@/kernel/terrain/heightfield';
-import { minEdgeDistance } from '@/kernel/geom2d/polygon';
+import { createHeightfield, sampleHeight, sampleX, sampleY } from '@/kernel/terrain/heightfield';
+import type { Heightfield } from '@/kernel/terrain/heightfield';
+import { minEdgeDistance, pointInConvexPolygon } from '@/kernel/geom2d/polygon';
 import { rectPolygon } from '@/kernel/geom2d/shapes';
 import { SoupBuilder } from '@/kernel/types';
 import type { EdgeTreatment } from '@/kernel/types';
@@ -38,6 +40,32 @@ const GEOMETRY: Record<string, Prop> = {
 
 /** The worker's side of the library: geometry only, keyed by library item id. */
 const SOURCE: PropSource = { get: (id) => GEOMETRY[id] ?? null };
+
+/** A ground of our own making, so a test can put a prop on an exactly known slope or bump. */
+function groundOf(w: number, d: number, f: (x: number, y: number) => number): Heightfield {
+  const hf = createHeightfield(w, d, 0.5, 0);
+  for (let j = 0; j < hf.ny; j++) for (let i = 0; i < hf.nx; i++) hf.z[j * hf.nx + i] = f(sampleX(hf, i), sampleY(hf, j));
+  return hf;
+}
+
+function handProp(assetId: string, x: number, y: number, extra: Partial<StudioProp> = {}): StudioProp {
+  return { id: 'hand-' + assetId, assetId, x, y, rotDeg: 0, scale: 1, sink: 0, seed: 1, licence: 'own-rights', scattered: false, ...extra };
+}
+
+/** Smallest and largest gap between a placed prop's points and the ground under them. */
+function gaps(soup: { positions: Float32Array; triCount: number }, hf: Heightfield): { min: number; max: number; lowest: number } {
+  let min = Infinity, max = -Infinity, lowest = Infinity;
+  for (let i = 0; i < soup.triCount * 9; i += 3) {
+    const x = soup.positions[i], y = soup.positions[i + 1], z = soup.positions[i + 2];
+    if (z < lowest) lowest = z;
+    // off the field there is no ground to measure against
+    if (Math.abs(x) > hf.w / 2 || Math.abs(y) > hf.d / 2) continue;
+    const g = z - sampleHeight(hf, x, y);
+    if (g < min) min = g;
+    if (g > max) max = g;
+  }
+  return { min, max, lowest };
+}
 
 function deckDoc(): StudioDocument {
   const d = newStudioDocument('Deck test', { kind: 'rect', w: 125, d: 50 }, 'scifi-deck');
@@ -121,6 +149,121 @@ describe('Base Studio scenes', () => {
     const small = newStudioDocument('small', { kind: 'ellipse', w: 25, d: 25 }, 'forest-floor');
     expect(effectiveHeightCap(small)).toBeLessThanOrEqual(6);
   });
+
+  it('drops every prop onto the ground so nothing floats', () => {
+    const SINK = 0.5;
+    const prop = boxProp(10, 6); // flat-bottomed and wide: the old centre-sample placement left it hovering
+
+    // a steady 11° slope: the prop leans with it, so its whole underside beds in
+    const slope = groundOf(60, 60, (x) => PLATE + 3 + x * 0.2);
+    const onSlope = placeProp(prop, handProp('a', 0, 0), slope, SINK, PLATE);
+    const gSlope = gaps(onSlope.soup, slope);
+    expect(gSlope.min).toBeCloseTo(-SINK, 3);
+    expect(gSlope.lowest).toBeGreaterThanOrEqual(PLATE - 0.1 + 0.02 - 1e-6);
+    expect(onSlope.x).toBe(0);
+    expect(onSlope.y).toBe(0);
+    expect(Number.isFinite(onSlope.z)).toBe(true);
+
+    // a bump under the middle: a flat box can only touch the top of it, and must touch it
+    const bump = groundOf(60, 60, (x, y) => PLATE + 3 + 1.5 * Math.exp(-(x * x + y * y) / 64));
+    const onBump = placeProp(prop, handProp('a', 0, 0), bump, SINK, PLATE);
+    const gBump = gaps(onBump.soup, bump);
+    expect(gBump.min).toBeCloseTo(-SINK, 3);
+    expect(gBump.max).toBeGreaterThan(0); // the corners are over the falling ground, as they should be
+    expect(gBump.lowest).toBeGreaterThanOrEqual(PLATE - 0.1 + 0.02 - 1e-6);
+
+    // off-centre on the bump's flank the ground tips away under one side: still no gap
+    const flank = placeProp(prop, handProp('a', 7, 4), bump, SINK, PLATE);
+    expect(gaps(flank.soup, bump).min).toBeCloseTo(-SINK, 3);
+
+    // half over the board's edge: the part still over the ground has to carry it
+    const edge = placeProp(prop, handProp('a', 30, 0), bump, SINK, PLATE);
+    const gEdge = gaps(edge.soup, bump);
+    expect(gEdge.min).toBeCloseTo(-SINK, 3);
+    expect(gEdge.lowest).toBeGreaterThanOrEqual(PLATE - 0.1 + 0.02 - 1e-6);
+
+    // burying it further only ever pushes it down
+    const deep = placeProp(prop, handProp('a', 0, 0, { sink: 1 }), bump, SINK, PLATE);
+    expect(gaps(deep.soup, bump).min).toBeCloseTo(-(SINK + 1), 3);
+    expect(deep.z).toBeLessThan(onBump.z);
+
+    // and nothing is ever pushed through the underside, however deep the bedding asks for
+    const ground = groundOf(60, 60, () => PLATE + 0.05);
+    const tooDeep = placeProp(boxProp(10, 1), handProp('a', 0, 0, { sink: 5 }), ground, SINK, PLATE);
+    expect(gaps(tooDeep.soup, ground).lowest).toBeGreaterThanOrEqual(PLATE - 0.1 + 0.02 - 1e-6);
+  });
+
+  it('keeps a prop the user drags or types out of bounds on the board', () => {
+    const round = newStudioDocument('round', { kind: 'ellipse', w: 60, d: 60 }, 'forest-floor', 1.5);
+    const clear = propClearance(round);
+    expect(clear).toBeCloseTo(3, 6); // 1.5 mm gap round the edge + 1.5 mm spare ground
+    expect(clampPropToBoard(round, 5, -4)).toEqual([5, -4]); // already inside: untouched
+    const pulled = clampPropToBoard(round, 200, 0);
+    expect(Math.hypot(pulled[0], pulled[1])).toBeLessThanOrEqual(31.5 - clear + 0.15);
+    expect(pulled[0]).toBeGreaterThan(20);
+    const corner = clampPropToBoard(round, -90, -90);
+    expect(Math.hypot(corner[0], corner[1])).toBeLessThanOrEqual(31.5 - clear + 0.15);
+    const rect = newStudioDocument('rect', { kind: 'rect', w: 100, d: 50 }, 'temple-ruins', 0);
+    const [rx, ry] = clampPropToBoard(rect, 400, 10);
+    expect(rx).toBeCloseTo(50 - rect.rules.rimInset, 6);
+    expect(ry).toBeCloseTo(10, 6);
+  });
+
+  it('cuts the ground to a round board in the live view exactly as in the finished scene', () => {
+    const round = newStudioDocument('round', { kind: 'ellipse', w: 60, d: 60 }, 'forest-floor', 1.5);
+    const clip = groundClip(round);
+    expect(clip).toBeTruthy();
+    // a square board needs no cut: the ground grid already is the board
+    expect(groundClip(newStudioDocument('rect', { kind: 'rect', w: 60, d: 60 }))).toBeUndefined();
+    const hf = buildGround(round, previewCell(round));
+    const slab = heightfieldToSlab(hf, { zBase: round.board.plateTop - 0.1, clipTo: clip });
+    expect(slab.triCount).toBeGreaterThan(1000);
+    const b = boundsOfSoup(slab);
+    // 60 mm plus 1.5 mm of spare ground each side = 63 mm across, and no square corners left
+    expect(b.max[0]).toBeLessThanOrEqual(31.5 + 1e-3);
+    expect(b.min[1]).toBeGreaterThanOrEqual(-31.5 - 1e-3);
+    for (let i = 0; i < slab.triCount * 9; i += 3) {
+      const x = slab.positions[i], y = slab.positions[i + 1];
+      expect(pointInConvexPolygon(clip!, x, y, 0.02)).toBe(true);
+    }
+
+    // the same for an oval: 120 x 92 plus 1.5 mm all round, and no corners
+    const oval = newStudioDocument('oval', { kind: 'ellipse', w: 120, d: 92 }, 'temple-ruins', 1.5);
+    const ovalClip = groundClip(oval)!;
+    const ohf = buildGround(oval, previewCell(oval));
+    const oslab = heightfieldToSlab(ohf, { zBase: oval.board.plateTop - 0.1, clipTo: ovalClip });
+    const ob = boundsOfSoup(oslab);
+    expect(ob.max[0]).toBeLessThanOrEqual(61.5 + 1e-3);
+    expect(ob.max[1]).toBeLessThanOrEqual(47.5 + 1e-3);
+    for (let i = 0; i < oslab.triCount * 9; i += 3) {
+      expect(pointInConvexPolygon(ovalClip, oslab.positions[i], oslab.positions[i + 1], 0.02)).toBe(true);
+    }
+  });
+
+  it('builds the biggest 40k round, 160 mm with spare ground, without warnings', () => {
+    const d = newStudioDocument('big round', { kind: 'ellipse', w: 160, d: 160 }, 'ash-waste', 1.5);
+    d.id = 'st-test-160';
+    d.ground.seed = 11;
+    d.scatterSeed = 12;
+    d.library = LIBRARY.map((it) => ({ ...it, family: 'any' as const }));
+    d.props = scatterScene(d, SOURCE);
+    expect(d.props.length).toBeGreaterThan(5);
+    // the live view's cut ground
+    const hf = buildGround(d, previewCell(d));
+    const preview = heightfieldToSlab(hf, { zBase: d.board.plateTop - 0.1, clipTo: groundClip(d) });
+    expect(preview.triCount).toBeGreaterThan(1000);
+    for (const p of d.props) {
+      const placed = placeProp(GEOMETRY[p.assetId], p, hf, d.rules.sink, d.board.plateTop);
+      expect(gaps(placed.soup, hf).min).toBeLessThanOrEqual(1e-3);
+    }
+    // and the finished scene
+    const res = bakeStudio(d, SOURCE);
+    expect(res.warnings).toEqual([]);
+    expect(res.propCount).toBe(d.props.length);
+    expect(res.prepared.nominal).toEqual({ kind: 'ellipse', w: 163, d: 163 });
+    const b = boundsOfSoup({ positions: res.prepared.sculpt.vertices, triCount: Math.floor(res.prepared.sculpt.vertexCount / 3) });
+    expect(b.max[0]).toBeLessThanOrEqual(81.5 + 0.2);
+  }, 120_000);
 
   it('bakes a sci-fi deck into a two-shell source the cutter turns into a supported 25 mm base', () => {
     const d = deckDoc();

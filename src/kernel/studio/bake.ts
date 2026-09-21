@@ -3,11 +3,11 @@
  * scattered props, and finally a `PreparedSource` the cutter consumes. Pure
  * kernel code; the worker calls it and the UI never touches the meshes.
  */
-import type { Polygon2, Soup, Vec3 } from '../types';
+import type { Polygon2, Soup, Vec2, Vec3 } from '../types';
 import { SoupBuilder } from '../types';
 import { shapePolygon } from '../geom2d/shapes';
 import { insetConvex } from '../geom2d/offset';
-import { polygonArea, polygonBounds, polygonCentroid, scalePolygonAbout } from '../geom2d/polygon';
+import { pointInConvexPolygon, polygonArea, polygonBounds, polygonCentroid, scalePolygonAbout } from '../geom2d/polygon';
 import { boundsOfSoup } from '../mesh/bbox';
 import { isWatertight } from '../mesh/validate';
 import type { Heightfield } from '../terrain/heightfield';
@@ -56,6 +56,52 @@ export function boardPolygons(doc: StudioDocument): { bottom: Polygon2; top: Pol
   const c = polygonCentroid(bottom);
   const top = scalePolygonAbout(bottom, doc.board.topScale[0], doc.board.topScale[1], c[0], c[1]);
   return { bottom, top };
+}
+
+/**
+ * The outline the ground is cut to. A rectangular board already IS the grid, so
+ * it needs no cut; a round or oval board must be cut to its own outline or the
+ * whole square grid shows (the live view and the finished scene MUST use the
+ * same one, which is why both call this).
+ */
+export function groundClip(doc: StudioDocument): Polygon2 | undefined {
+  if (doc.board.shape.kind === 'rect') return undefined;
+  return insetConvex(boardPolygons(doc).top, 0.3);
+}
+
+/**
+ * How far from the board's edge a prop's centre is kept: the gap the user asked
+ * for plus the spare ground that gets cut away again. Never more than a third of
+ * the smaller side, so a small board still has somewhere to put things.
+ */
+export function propClearance(doc: StudioDocument): number {
+  const { w, d } = boardShape(doc.board);
+  const asked = Math.max(0, doc.rules.rimInset) + Math.max(0, doc.board.margin ?? 0);
+  return Math.min(asked, Math.min(w, d) / 3);
+}
+
+/**
+ * The nearest spot on the board for a prop the user dragged or typed out of
+ * bounds: inside the board outline, `propClearance` in from the edge. Returns
+ * the point unchanged when it is already inside.
+ */
+export function clampPropToBoard(doc: StudioDocument, x: number, y: number): Vec2 {
+  const top = boardPolygons(doc).top;
+  const inset = propClearance(doc);
+  const poly = inset > 0 ? (insetConvex(top, inset).length >= 3 ? insetConvex(top, inset) : top) : top;
+  if (pointInConvexPolygon(poly, x, y, 1e-9)) return [x, y];
+  let best: Vec2 = [poly[0][0], poly[0][1]];
+  let bestD = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const ex = b[0] - a[0], ey = b[1] - a[1];
+    const len2 = ex * ex + ey * ey;
+    const t = len2 < 1e-15 ? 0 : Math.max(0, Math.min(1, ((x - a[0]) * ex + (y - a[1]) * ey) / len2));
+    const px = a[0] + ex * t, py = a[1] + ey * t;
+    const dd = (px - x) * (px - x) + (py - y) * (py - y);
+    if (dd < bestD) { bestD = dd; best = [px, py]; }
+  }
+  return best;
 }
 
 /** Build the ground from the document's recipe (deterministic). `cell` overrides the sample spacing (coarser for previews). */
@@ -212,47 +258,78 @@ export function heightCapWarnings(doc: StudioDocument): string[] {
   return out;
 }
 
-/** Place a prop's soup on the ground: scale, yaw, tilt to the ground normal, sink. */
-export function placeProp(prop: Prop, p: StudioProp, hf: Heightfield, sinkDefault: number, plateTop: number): Soup {
-  const z0 = sampleHeight(hf, p.x, p.y);
+/**
+ * A prop after it has been dropped onto the ground: the moved triangles, and
+ * where the prop's own origin ended up. The UI needs that origin to draw a
+ * selected prop and hang a drag handle on it.
+ */
+export interface PlacedProp {
+  soup: Soup;
+  /** the prop's origin in scene mm: x and y are the user's, z is whatever the drop worked out */
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * Put a prop on the ground: scale it, turn it, lean it with the slope, then
+ * DROP it until it touches.
+ *
+ * The old version read the ground height under the prop's centre only, which
+ * left a wide prop, a prop on a slope and a prop with an uneven underside
+ * hanging in the air on one side. Here every point of the prop is measured
+ * against the ground under it and the whole prop is lowered until its closest
+ * point is `sink` mm inside the ground — so something always touches, and
+ * nothing floats. Off the board the ground counts as the plate top (lower than
+ * any ground), so a prop hanging over the edge still rests on the part that is
+ * over the board instead of being pushed up by thin air.
+ */
+export function placeProp(prop: Prop, p: StudioProp, hf: Heightfield, sinkDefault: number, plateTop: number): PlacedProp {
   const n = sampleNormal(hf, p.x, p.y);
   const sink = Math.min(sinkDefault + p.sink, prop.height * p.scale * 0.4);
-  const zBottom = z0 - sink; // the prop's ground line; its bedded part goes below this
   const yaw = (p.rotDeg * Math.PI) / 180;
   const cy = Math.cos(yaw), sy = Math.sin(yaw);
-  // tilt: rotate z-up onto the ground normal (limited to 25° so tall props do not topple)
+  // lean: rotate z-up onto the ground normal (limited to 25° so tall props do not topple)
   const tilt = Math.min(Math.acos(Math.max(-1, Math.min(1, n[2]))), (25 * Math.PI) / 180);
   const ax = n[1], ay = -n[0]; // rotation axis = z × n
   const al = Math.hypot(ax, ay) || 1;
   const kx = ax / al, ky = ay / al;
   const ct = Math.cos(tilt), st = Math.sin(tilt);
+  const hw = hf.w / 2 + 1e-9, hd = hf.d / 2 + 1e-9;
   const src = prop.soup.positions;
   const n9 = prop.soup.triCount * 9;
   const out = new Float32Array(n9);
-  let minZ = Infinity;
+  // pass 1: place x/y and keep z relative to the prop's own origin, measuring the
+  // smallest gap to the ground and the lowest point as we go
+  let minGap = Infinity, minZ = Infinity;
   for (let i = 0; i < n9; i += 3) {
-    let x = src[i] * p.scale, y = src[i + 1] * p.scale, z = src[i + 2] * p.scale;
-    // yaw
+    let x = src[i] * p.scale, y = src[i + 1] * p.scale;
+    const z = src[i + 2] * p.scale;
+    // turn
     const rx = x * cy - y * sy, ry = x * sy + y * cy;
     x = rx; y = ry;
-    // tilt about (kx, ky, 0) by Rodrigues
+    // lean about (kx, ky, 0) by Rodrigues
     const dot = kx * x + ky * y;
     const cxv = ky * z, cyv = -kx * z, czv = kx * y - ky * x; // k × v
-    const tx = x * ct + cxv * st + kx * dot * (1 - ct);
-    const ty = y * ct + cyv * st + ky * dot * (1 - ct);
+    const tx = x * ct + cxv * st + kx * dot * (1 - ct) + p.x;
+    const ty = y * ct + cyv * st + ky * dot * (1 - ct) + p.y;
     const tz = z * ct + czv * st;
-    out[i] = tx + p.x;
-    out[i + 1] = ty + p.y;
-    out[i + 2] = tz + zBottom;
-    if (out[i + 2] < minZ) minZ = out[i + 2];
+    out[i] = tx;
+    out[i + 1] = ty;
+    out[i + 2] = tz;
+    const ground = tx >= -hw && tx <= hw && ty >= -hd && ty <= hd ? sampleHeight(hf, tx, ty) : plateTop;
+    const gap = tz - ground;
+    if (gap < minGap) minGap = gap;
+    if (tz < minZ) minZ = tz;
   }
-  // nothing may reach below the slab's underside (plateTop - 0.1), whatever the bedding or tilt did
+  if (!Number.isFinite(minGap)) return { soup: { positions: out, triCount: prop.soup.triCount }, x: p.x, y: p.y, z: plateTop };
+  // drop until the closest point is `sink` inside the ground…
+  let z0 = -sink - minGap;
+  // …but nothing may reach below the underside of the ground, whatever the bedding or lean did
   const floor = plateTop - 0.1 + 0.02;
-  if (minZ < floor) {
-    const lift = floor - minZ;
-    for (let i = 2; i < n9; i += 3) out[i] += lift;
-  }
-  return { positions: out, triCount: prop.soup.triCount };
+  if (minZ + z0 < floor) z0 = floor - minZ;
+  for (let i = 2; i < n9; i += 3) out[i] += z0;
+  return { soup: { positions: out, triCount: prop.soup.triCount }, x: p.x, y: p.y, z: z0 };
 }
 
 export interface BakeResult {
@@ -269,13 +346,12 @@ export function bakeStudio(doc: StudioDocument, source: PropSource, name = doc.n
   const t0 = now();
   const timings: Record<string, number> = {};
   const warnings: string[] = [...heightCapWarnings(doc)];
-  const { bottom, top } = boardPolygons(doc);
+  const { bottom } = boardPolygons(doc);
   const plate = doc.board.plateTop;
   const hf = buildGround(doc);
   timings.ground = now() - t0;
   let t1 = now();
-  const clip = doc.board.shape.kind === 'rect' ? undefined : insetConvex(top, 0.3);
-  const slab = heightfieldToSlab(hf, { zBase: plate - 0.1, clipTo: clip });
+  const slab = heightfieldToSlab(hf, { zBase: plate - 0.1, clipTo: groundClip(doc) });
   timings.slab = now() - t1;
   t1 = now();
   const shells: Soup[] = [slab];
@@ -287,8 +363,7 @@ export function bakeStudio(doc: StudioDocument, source: PropSource, name = doc.n
       warnings.push(item ? `${item.name}: the STL is not loaded, so it was left out (add ${item.fileName} again)` : `a prop that is no longer in the library was left out`);
       continue;
     }
-    const soup = placeProp(prop, p, hf, doc.rules.sink, plate);
-    shells.push(soup);
+    shells.push(placeProp(prop, p, hf, doc.rules.sink, plate).soup);
     placed++;
   }
   timings.props = now() - t1;

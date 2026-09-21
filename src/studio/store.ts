@@ -13,21 +13,46 @@ import { produce } from 'immer';
 import * as Comlink from 'comlink';
 import { kernel, withTimeout } from '@/worker/client';
 import type { Bounds3 } from '@/kernel/types';
-import type { MeshTransfer, StudioAssetInfo, StudioAssetTransfer } from '@/worker/api';
+import type { MeshTransfer, StudioAssetInfo, StudioAssetTransfer, StudioPlacement, StudioPropRange } from '@/worker/api';
 import { normalizeStudioDocument, studioId } from '@/kernel/studio/document';
 import type { StudioDocument, StudioLibraryItem } from '@/kernel/studio/document';
+import { clampPropToBoard } from '@/kernel/studio/bake';
 import { useAppStore } from '@/state/project';
 import { newId } from '@/model/defaults';
 
 export type StudioTab = 'board' | 'ground' | 'props' | 'rules';
 
+/** What the drag handle on the selected prop does: slide it, turn it, or resize it. */
+export type TransformMode = 'move' | 'turn' | 'size';
+
 export interface StudioPreview {
   ground: MeshTransfer;
   props: MeshTransfer;
+  /** which triangles of `props` belong to which placed prop (for clicking and highlighting) */
+  propRanges: StudioPropRange[];
+  /** where each placed prop ended up, including the height the drop worked out */
+  placements: StudioPlacement[];
   bounds: Bounds3;
   propCount: number;
   warnings: string[];
   ms: number;
+}
+
+/** What one prop's numbers can be set to directly (the Props tab's fields). */
+export interface PropEdit {
+  x?: number;
+  y?: number;
+  rotDeg?: number;
+  scale?: number;
+  sink?: number;
+}
+
+/** What a finished drag of the handle in the view changes. */
+export interface PropTransform {
+  x?: number;
+  y?: number;
+  rotDegDelta?: number;
+  scaleFactor?: number;
 }
 
 interface StudioState {
@@ -57,11 +82,24 @@ interface StudioState {
   error: string | null;
   history: StudioDocument[];
   future: StudioDocument[];
+  /** the prop the user clicked in the view, if any; cleared when it stops existing */
+  selectedPropId: string | null;
+  /** what the drag handle on the selected prop does */
+  transformMode: TransformMode;
 
   open(doc: StudioDocument): void;
   close(): void;
   setTab(tab: StudioTab): void;
   setViewMode(mode: 'top' | 'orbit'): void;
+  /** pick a prop in the view (null clears the selection) */
+  select(id: string | null): void;
+  setTransformMode(mode: TransformMode): void;
+  /** set one prop's numbers directly; the prop becomes hand-placed, in one undo step */
+  editProp(id: string, patch: PropEdit): void;
+  /** finish a drag of the handle in the view: same effect as typing the numbers */
+  commitPropTransform(id: string, t: PropTransform): void;
+  /** take one prop off the board */
+  removeProp(id: string): void;
   /** edit the document (immer recipe); previews refresh after a short pause */
   update(recipe: (d: StudioDocument) => void, options?: { history?: boolean }): void;
   undo(): void;
@@ -158,10 +196,12 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
   error: null,
   history: [],
   future: [],
+  selectedPropId: null,
+  transformMode: 'move',
 
   open(rawDoc) {
     const doc = normalizeStudioDocument(rawDoc);
-    set({ doc, tab: 'board', preview: null, dirty: true, error: null, confirmRemove: null, notice: null, history: [], future: [] });
+    set({ doc, tab: 'board', preview: null, dirty: true, error: null, confirmRemove: null, notice: null, history: [], future: [], selectedPropId: null });
     void (async () => {
       // files added earlier in this session are still here; a re-opened scene asks for the rest
       await get().syncLibrary();
@@ -182,11 +222,56 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
     noticeSerial++;
     pendingRescatter = false;
     pendingReason = null;
-    set({ doc: null, preview: null, previewing: false, dirty: false, confirmRemove: null, notice: null });
+    set({ doc: null, preview: null, previewing: false, dirty: false, confirmRemove: null, notice: null, selectedPropId: null });
   },
 
   setTab(tab) { set({ tab }); },
   setViewMode(viewMode) { set({ viewMode }); },
+
+  select(id) {
+    if (id !== null && !get().doc?.props.some((p) => p.id === id)) return;
+    set({ selectedPropId: id });
+  },
+
+  setTransformMode(transformMode) { set({ transformMode }); },
+
+  editProp(id, patch) {
+    const doc = get().doc;
+    if (!doc) return;
+    const prop = doc.props.find((p) => p.id === id);
+    if (!prop) return;
+    const wantX = patch.x ?? prop.x;
+    const wantY = patch.y ?? prop.y;
+    const [x, y] = clampPropToBoard(doc, wantX, wantY);
+    get().update((d) => {
+      const t = d.props.find((p) => p.id === id);
+      if (!t) return;
+      t.x = Math.round(x * 1000) / 1000;
+      t.y = Math.round(y * 1000) / 1000;
+      if (patch.rotDeg !== undefined) t.rotDeg = Math.round((((patch.rotDeg % 360) + 360) % 360) * 10) / 10;
+      if (patch.scale !== undefined) t.scale = Math.max(0.1, Math.min(10, patch.scale));
+      if (patch.sink !== undefined) t.sink = Math.max(0, Math.min(20, patch.sink));
+      // a prop the user has touched is theirs: placing the others again never moves it
+      t.scattered = false;
+    });
+    set({ selectedPropId: id });
+  },
+
+  commitPropTransform(id, t) {
+    const prop = get().doc?.props.find((p) => p.id === id);
+    if (!prop) return;
+    get().editProp(id, {
+      x: t.x ?? prop.x,
+      y: t.y ?? prop.y,
+      rotDeg: t.rotDegDelta !== undefined ? prop.rotDeg + t.rotDegDelta : undefined,
+      scale: t.scaleFactor !== undefined ? prop.scale * t.scaleFactor : undefined,
+    });
+  },
+
+  removeProp(id) {
+    if (get().selectedPropId === id) set({ selectedPropId: null });
+    get().update((d) => { d.props = d.props.filter((p) => p.id !== id); });
+  },
 
   update(recipe, options) {
     const doc = get().doc;
@@ -194,7 +279,8 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
     const next = produce(doc, recipe);
     if (next === doc) return;
     const history = options?.history === false ? get().history : [...get().history.slice(-49), doc];
-    set({ doc: next, dirty: true, history, future: [] });
+    const selectedPropId = next.props.some((p) => p.id === get().selectedPropId) ? get().selectedPropId : null;
+    set({ doc: next, dirty: true, history, future: [], selectedPropId });
     // keep the project's copy current so it saves with the file
     useAppStore.getState().saveStudioDocument(next);
     // an edit that moves the scatter's ground rules re-rolls it (same seed, hand-placed props kept);
@@ -395,7 +481,7 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
       const t0 = performance.now();
       const res = await withTimeout(kernel().previewStudio(doc), PREVIEW_TIMEOUT, 'Building the preview');
       if (serial !== previewSerial) return; // a newer preview superseded this one
-      set({ preview: { ground: res.ground, props: res.props, bounds: res.bounds, propCount: res.propCount, warnings: res.warnings, ms: Math.round(performance.now() - t0) }, previewing: false, error: null });
+      set({ preview: { ground: res.ground, props: res.props, propRanges: res.propRanges, placements: res.placements, bounds: res.bounds, propCount: res.propCount, warnings: res.warnings, ms: Math.round(performance.now() - t0) }, previewing: false, error: null });
     } catch (err) {
       if (serial === previewSerial) set({ previewing: false, error: err instanceof Error ? err.message : String(err) });
     }

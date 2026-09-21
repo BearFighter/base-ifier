@@ -180,3 +180,18 @@ button.link { background: none; border: none; padding: 0; color: inherit; text-d
 .lib-controls label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 11px; opacity: 0.85; }
 .lib-controls select, .lib-controls input { font-size: 11px; padding: 3px 4px; }
 .lib-controls label:last-child { flex: 0 0 62px; }
+
+/* Base Studio: picking a prop in the view, and naming every number that moves it */
+.studio-hud .hud-gap { width: 1px; align-self: stretch; margin: 2px 3px; background: rgba(255, 255, 255, 0.18); }
+.card-list { margin: 8px 0 4px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.card-item { border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 8px; padding: 7px 8px; background: rgba(255, 255, 255, 0.035); }
+.card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.card-name { flex: 1; min-width: 0; font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.card-row .muted { white-space: nowrap; font-size: 11px; }
+.card-row button { font-size: 11px; padding: 3px 8px; white-space: nowrap; }
+.card-item.selected { border-color: #d9a441; background: rgba(217, 164, 65, 0.12); }
+/* two named boxes per line: the label, unit and help line all still fit */
+.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
+.field-grid .field { margin-bottom: 6px; min-width: 0; }
+.field-grid .field input { width: 100%; box-sizing: border-box; }

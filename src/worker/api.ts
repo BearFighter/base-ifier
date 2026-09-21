@@ -199,10 +199,42 @@ export interface StudioAssetInfo {
   error?: string;
 }
 
+/**
+ * Which triangles of the merged props mesh belong to which placed prop, in
+ * document order. Lets the viewport turn a clicked triangle into a prop id and
+ * lift one prop out of the merged mesh without a mesh per prop.
+ */
+export interface StudioPropRange {
+  /** `StudioProp.id` */
+  id: string;
+  /** first triangle of this prop in the merged props mesh */
+  start: number;
+  /** how many triangles it has */
+  count: number;
+}
+
+/**
+ * Where a placed prop actually ended up: x and y are the document's, z is the
+ * height the drop-to-ground worked out, and rotDeg/scale are the document's.
+ * The viewport hangs its drag handle on exactly this spot.
+ */
+export interface StudioPlacement {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  rotDeg: number;
+  scale: number;
+}
+
 /** What the studio viewport draws: the ground and all props as flat triangle soups (positions only). */
 export interface StudioPreviewTransfer {
   ground: MeshTransfer;
   props: MeshTransfer;
+  /** triangle ranges into `props`, one per placed prop, in document order */
+  propRanges: StudioPropRange[];
+  /** where each placed prop ended up, same order as `propRanges` */
+  placements: StudioPlacement[];
   bounds: Bounds3;
   propCount: number;
   warnings: string[];

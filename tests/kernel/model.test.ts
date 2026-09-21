@@ -47,7 +47,7 @@ describe('bases.json preset catalog', () => {
     const footprints = allPresets().filter((p) => p.kind === 'footprint');
 
     expect(presetsForSystem('opr').filter((p) => p.kind === 'base')).toHaveLength(22);
-    expect(presetsForSystem('40k').filter((p) => p.kind === 'base')).toHaveLength(18);
+    expect(presetsForSystem('40k').filter((p) => p.kind === 'base')).toHaveLength(21);
     expect(presetsForSystem('old-world').filter((p) => p.kind === 'base')).toHaveLength(12);
     expect(presetsForSystem('old-world').filter((p) => p.kind === 'footprint')).toHaveLength(10);
     expect(presetsForSystem('kow').filter((p) => p.kind === 'base')).toHaveLength(11);
