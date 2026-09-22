@@ -16,7 +16,7 @@ export const TRAY_HELP = {
   edge: 'How far the tray sticks out past the bases, so there is always an edge to pick it up by. It is also what stiffens the tray, so do not go below 2 mm on a big one.',
   magnets: 'Puts a magnet hole in the tray floor under every base, lined up with the base’s own magnet. Check which way round the magnets go before you glue them.',
   spacing: 'Leaves a gap between bases when you fill the frame. A small gap gives the tray a raised wall between each base — it looks more like a real tray and stops a big thin floor from curling.',
-  profile: 'Bases for a tray get straight sides so they sit snugly in their slots. You can change any base’s edge shape afterwards.',
+  profile: 'Bases keep the edge shape you picked. Slots are sized from the bottom of the base, so any edge shape drops in; a sloped edge leaves a small groove around the base in the tray.',
 };
 
 /**

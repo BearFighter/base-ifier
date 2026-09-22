@@ -8,13 +8,12 @@
  */
 import { useMemo, useState } from 'react';
 import type { Shape } from '@/kernel/types';
-import { PROFILE_FLAT } from '@/kernel/types';
 import { SYSTEMS, allPresets, presetLabel, type BasePreset } from '@/model/presets';
 import { profileForSystem, TRAY_FLOOR_MAX, TRAY_FLOOR_MIN } from '@/model/defaults';
 import { usesFrames } from '@/model/rules';
 import { largestEmptyRect } from '@/kernel/geom2d/maxEmptyRect';
 import { useAppStore } from '@/state/project';
-import { TRAY_HELP, TrayFloorCallout, TrayMagnetCallout } from '@/ui/tray/TrayBits';
+import { TRAY_HELP } from '@/ui/tray/TrayBits';
 import { useBases, type BaseBox } from './useBases';
 import type { Rect } from './snap';
 import './cutter.css';
@@ -60,9 +59,8 @@ export function AddBar() {
 
   const setBase = (k: string) => { setBaseKey(k); const p = byKey(k); if (p) setBaseShape({ kind: p.shape.kind, w: p.w, d: p.d }); };
   const setFrame = (k: string) => { setFrameKey(k); const p = byKey(k); if (p) setFrameShape({ kind: p.shape.kind, w: p.w, d: p.d }); };
-  // Bases for a tray get straight sides so they sit snugly in their slots; a size picked
-  // from a game's list still wins, and the project's own default is left alone.
-  const profileFor = (k: string) => (byKey(k) && profileForSystem(byKey(k)!.system)) ?? (mode === 'tray' ? PROFILE_FLAT : B.defaultProfile);
+  // the edge shape follows the game system of the picked size, else the project's default (tray slots are sized from the base's bottom outline, so any edge shape fits)
+  const profileFor = (k: string) => (byKey(k) && profileForSystem(byKey(k)!.system)) ?? B.defaultProfile;
 
   /** place `shape` inside `target`'s usable area; auto-turn to fit */
   const place = (target: BaseBox, shape: Shape, opts: { role: 'base' | 'frame'; name?: string; key: string; fillGrid?: boolean; margin?: number }) => {
@@ -221,12 +219,6 @@ export function AddBar() {
                 <label title={TRAY_HELP.gap}>Room around each base <input type="number" step={0.05} min={0} max={1} value={num(tray.gap)} onChange={(e) => B.setTraySettings({ gap: clampNum(e.target.value, 0, 1) })} /> mm</label>
                 <label title={TRAY_HELP.edge}>Rim <input type="number" step={0.5} min={0} max={20} value={num(tray.edge)} onChange={(e) => B.setTraySettings({ edge: clampNum(e.target.value, 0, 20) })} /> mm</label>
                 <label title={TRAY_HELP.magnets}><input type="checkbox" checked={tray.magnets} onChange={(e) => B.setTraySettings({ magnets: e.target.checked })} /> Magnets in the floor</label>
-              </div>
-            )}
-            {mode === 'tray' && trayInfo && (
-              <div className="row tray-callouts">
-                <TrayMagnetCallout tray={trayInfo} onSetFloor={(v) => B.setTraySettings({ floor: v })} />
-                <TrayFloorCallout tray={trayInfo} floor={tray.floor} onSetFloor={(v) => B.setTraySettings({ floor: v })} />
               </div>
             )}
           </>

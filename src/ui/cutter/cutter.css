@@ -1,6 +1,8 @@
 /* ---- centre column: bar above the 3D view + the view itself ---- */
 .app-center { display: flex; flex-direction: column; min-width: 0; }
-.viewport-host { position: relative; flex: 1; min-height: 0; }
+.viewport-host { position: relative; flex: 1; min-height: 40vh; }
+/* the dock must never squeeze the view away: past a third of the window it scrolls instead */
+.layout-dock { max-height: 32vh; overflow-y: auto; flex: 0 1 auto; }
 .viewport-empty {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   padding: 24px; pointer-events: none;
