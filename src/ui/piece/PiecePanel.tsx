@@ -1,11 +1,10 @@
 /** Right-column panel: view/edit the selected piece. */
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import type { EdgeTreatment, Shape } from '@/kernel/types';
-import { PROFILE_CHOICES, profileId, TRAY_FLOOR_MAX, TRAY_FLOOR_MIN } from '@/model/defaults';
+import { defaultTraySettings, PROFILE_CHOICES, profileId, TRAY_FLOOR_MAX, TRAY_FLOOR_MIN } from '@/model/defaults';
 import type { TraySettings } from '@/model/types';
 import { pieceSize } from '@/model/tree';
 import { useAppStore } from '@/state/project';
-import { traySettingsFor } from '@/state/chain';
 import { Details, Field } from '@/ui/common/Field';
 import { Hint } from '@/ui/common/Hint';
 import { TRAY_HELP, TrayFloorCallout, TrayMagnetCallout } from '@/ui/tray/TrayBits';
@@ -81,8 +80,7 @@ function CutSection({
  * itself. Edits go to that frame, so two frames on one scene can have different
  * trays; leaving the frame out would change every tray in the project.
  */
-function TraySection({ frameId, tray, settings, onChange }: { frameId: string | undefined; tray: TrayInfo | undefined; settings: TraySettings; onChange: (patch: Partial<TraySettings>) => void }) {
-  void frameId;
+function TraySection({ tray, settings, onChange }: { tray: TrayInfo | undefined; settings: TraySettings; onChange: (patch: Partial<TraySettings>) => void }) {
   const span = tray ? Math.max(tray.thinSpan.w, tray.thinSpan.d) : 0;
   return (
     <Details summary={`Tray: ${settings.floor} mm floor, ${settings.edge} mm rim`} defaultOpen>
@@ -181,7 +179,11 @@ export function PiecePanel() {
     if (p.role === 'tray') return p.trayOf;
     return p.role === 'frame' && s.project.mode === 'tray' ? p.id : undefined;
   });
-  const traySettings = useAppStore((s) => traySettingsFor(s.project, trayFrameId ? s.project.pieces[trayFrameId] : undefined));
+  // Selectors must return a stable reference: building the merged settings inside one
+  // would hand React a new object every render and loop until it gave up.
+  const trayProjectDefaults = useAppStore((s) => s.project.tray);
+  const trayFrameOverride = useAppStore((s) => (trayFrameId ? s.project.pieces[trayFrameId]?.tray : undefined));
+  const traySettings = useMemo<TraySettings>(() => ({ ...defaultTraySettings(), ...(trayProjectDefaults ?? {}), ...(trayFrameOverride ?? {}) }), [trayProjectDefaults, trayFrameOverride]);
   const trayGeom = useAppStore((s) => {
     const t = Object.values(s.project.pieces).find((p) => p.role === 'tray' && p.trayOf === trayFrameId);
     return t ? s.geometry[t.id]?.data?.tray : undefined;
@@ -232,7 +234,7 @@ export function PiecePanel() {
       {!isRoot && <div className="piece-position">{positionPhrase(piece.xy)}</div>}
 
       {trayFrameId && (
-        <TraySection frameId={trayFrameId} tray={trayGeom} settings={traySettings} onChange={(patch) => setTraySettings(patch, trayFrameId)} />
+        <TraySection tray={trayGeom} settings={traySettings} onChange={(patch) => setTraySettings(patch, trayFrameId)} />
       )}
 
       <Details summary="Size & position">

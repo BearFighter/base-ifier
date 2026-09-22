@@ -33,7 +33,16 @@ export function AddBar() {
   const [frameRowOpen, setFrameRowOpen] = useState(false);
   const [baseSpacing, setBaseSpacing] = useState(0);
   // the tray of the frame in hand, once it has been made, so its measurements can be reported
-  const trayPiece = useAppStore((s) => Object.values(s.project.pieces).find((p) => p.role === 'tray'));
+  // the tray of the frame in hand, once it has been made, so its measurements are reported
+  const frameInHandId = useAppStore((s) => {
+    const sel = s.project.selectedId ? s.project.pieces[s.project.selectedId] : undefined;
+    if (!sel) return undefined;
+    if (sel.role === 'frame') return sel.id;
+    if (sel.role === 'tray') return sel.trayOf;
+    const parent = sel.parentId ? s.project.pieces[sel.parentId] : undefined;
+    return parent?.role === 'frame' ? parent.id : undefined;
+  });
+  const trayPiece = useAppStore((s) => Object.values(s.project.pieces).find((p) => p.role === 'tray' && (!frameInHandId || p.trayOf === frameInHandId)));
   const trayInfo = useAppStore((s) => (trayPiece ? s.geometry[trayPiece.id]?.data?.tray : undefined));
 
   if (!B.root || !B.selected || !B.selectedBox) return null;
@@ -56,14 +65,16 @@ export function AddBar() {
   const profileFor = (k: string) => (byKey(k) && profileForSystem(byKey(k)!.system)) ?? (mode === 'tray' ? PROFILE_FLAT : B.defaultProfile);
 
   /** place `shape` inside `target`'s usable area; auto-turn to fit */
-  const place = (target: BaseBox, shape: Shape, opts: { role: 'base' | 'frame'; name?: string; key: string; fillGrid?: boolean }) => {
-    const area = { w: r2(target.usable.w), d: r2(target.usable.h) };
+  const place = (target: BaseBox, shape: Shape, opts: { role: 'base' | 'frame'; name?: string; key: string; fillGrid?: boolean; margin?: number }) => {
+    // In tray mode a frame needs room for its rim as well, or the scene clips the tray short
+    const margin = opts.margin ?? 0;
+    const area = { w: r2(target.usable.w - 2 * margin), d: r2(target.usable.h - 2 * margin) };
     const cx = target.usable.x + target.usable.w / 2, cy = target.usable.y + target.usable.h / 2;
     const children = B.boxes.filter((b) => b.piece.parentId === target.id).map((b) => ({ x: b.rect.x - cx + area.w / 2, y: b.rect.y - cy + area.d / 2, w: b.rect.w, h: b.rect.h }));
     let s = shape;
     const fits = (q: Shape) => q.w <= area.w + 1e-6 && q.d <= area.d + 1e-6;
     if (!fits(s) && fits({ ...s, w: s.d, d: s.w })) s = { ...s, w: s.d, d: s.w };
-    if (!fits(s)) { setNote(`${num(shape.w)} × ${num(shape.d)} mm does not fit in the ${num(area.w)} × ${num(area.d)} mm area.`); return; }
+    if (!fits(s)) { setNote(`${num(shape.w)} × ${num(shape.d)} mm does not fit in the ${num(area.w)} × ${num(area.d)} mm area${margin > 0 ? `, which is what is left once the tray rim is allowed for` : ''}.`); return; }
     const turned = s !== shape;
     if (opts.fillGrid) {
       // n bases with (n - 1) gaps between them have to fit the area
@@ -187,7 +198,7 @@ export function AddBar() {
                 <span className="lbl" title={usableTitle}><strong>1 · Unit frame</strong> <span className="muted">({usable})</span></span>
                 {presetSelect(frameKey, setFrame, framePresets, 'Pick a unit frame…', 'Whole-unit frame sizes for Kings of War and The Old World; or type a size')}
                 {sizeInputs(frameShape, setFrameShape, 'Frontage, left to right (mm)')}
-                <button type="button" className="primary" onClick={() => { place(rootBox, frameShape, { role: 'frame', key: frameKey, name: byKey(frameKey)?.name }); setFrameRowOpen(false); }} title="Place a frame of this size on the scene; bases go inside it">Place frame</button>
+                <button type="button" className="primary" onClick={() => { place(rootBox, frameShape, { role: 'frame', key: frameKey, name: byKey(frameKey)?.name, margin: mode === 'tray' ? tray.edge + 0.05 : 0 }); setFrameRowOpen(false); }} title={mode === 'tray' ? 'Place a frame of this size on the scene, leaving room for the tray rim around it; bases go inside it' : 'Place a frame of this size on the scene; bases go inside it'}>Place frame</button>
                 {frames.length > 0 && <button type="button" onClick={() => setFrameRowOpen(false)} title="Hide the frame controls">Done</button>}
               </div>
             )}
@@ -212,7 +223,7 @@ export function AddBar() {
                 <label title={TRAY_HELP.magnets}><input type="checkbox" checked={tray.magnets} onChange={(e) => B.setTraySettings({ magnets: e.target.checked })} /> Magnets in the floor</label>
               </div>
             )}
-            {mode === 'tray' && (trayInfo?.magnetMode === 'through' || trayInfo) && (
+            {mode === 'tray' && trayInfo && (
               <div className="row tray-callouts">
                 <TrayMagnetCallout tray={trayInfo} onSetFloor={(v) => B.setTraySettings({ floor: v })} />
                 <TrayFloorCallout tray={trayInfo} floor={tray.floor} onSetFloor={(v) => B.setTraySettings({ floor: v })} />

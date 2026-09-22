@@ -3,6 +3,7 @@ import { prepareSource } from '@/kernel/source/prepareSource';
 import { computePiece, sourceFrame } from '@/kernel/pipeline/computePiece';
 import type { TrayParams } from '@/kernel/pipeline/computePiece';
 import { DEFAULT_HOLLOW } from '@/kernel/body/hollow';
+import { densitySpacing, presupport, DEFAULT_PRESUPPORT } from '@/kernel/pipeline/presupport';
 import { PROFILE_FLAT } from '@/kernel/types';
 import { syntheticTwoShellBase, boxSoup } from '../fixtures/synthetic';
 import type { EdgeTreatment } from '@/kernel/types';
@@ -489,5 +490,41 @@ describe('tray in the pipeline', () => {
     expect(mixed.tray!.magnetMode).toBe('recess');
     const empty = computePiece(root, { shape: { kind: 'rect', w: 56, d: 31 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, role: 'tray', tray: trayParamsFor(0, 25, 1, { pockets: [], magnets: [] }) }, { source: src });
     expect(empty.warnings.some((w) => /nothing to hold/.test(w))).toBe(true);
+  });
+});
+
+describe('tray print-ready export', () => {
+  it('supports a tray flat or on a shallow tilt, clear of the magnet holes', () => {
+    const src = scene();
+    const tray = computePiece(sourceFrame(src), { shape: { kind: 'rect', w: 56, d: 31 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, role: 'tray', tray: trayParamsFor(2, 25, 1) }, { source: src });
+    const info = tray.tray!;
+    const maxDim = Math.max(tray.size.w, tray.size.d);
+    // the rule the worker's exportable() applies: flat up to 80 mm, a shallow tilt above it
+    expect(maxDim <= 80 ? 0 : 25).toBe(0);
+    const d = densitySpacing(maxDim, 'medium');
+    const flat = presupport(
+      { body: tray.body, sculpt: tray.sculpt, bottom: tray.outline.bottom, slots: info.magnets },
+      { ...DEFAULT_PRESUPPORT, tiltDeg: 0, spacing: Math.min(d.spacing, 6), edgeSpacing: d.edgeSpacing },
+    );
+    expect(flat.tiltDeg).toBe(0);
+    expect(flat.supportCount).toBeGreaterThan(20);
+    expect(isWatertight(flat.supports)).toBe(true);
+    expect(boundsOfSoup(flat.body).min[2]).toBeCloseTo(DEFAULT_PRESUPPORT.standoff, 3);
+    // no support tip stands in a magnet hole
+    for (const c of flat.contacts) {
+      for (const m of info.magnets) expect(Math.hypot(c[0] - m.x, c[1] - m.y)).toBeGreaterThan(m.radius);
+    }
+
+    // a big tray gets the shallow tilt instead, and the middle spacing stays clamped
+    const big = densitySpacing(131, 'medium');
+    expect(big.spacing).toBe(8);
+    expect(Math.min(big.spacing, 6)).toBe(6);
+    const tilted = presupport(
+      { body: tray.body, sculpt: tray.sculpt, bottom: tray.outline.bottom, slots: info.magnets },
+      { ...DEFAULT_PRESUPPORT, tiltDeg: 25, spacing: 6, edgeSpacing: big.edgeSpacing },
+    );
+    expect(tilted.tiltDeg).toBe(25);
+    expect(isWatertight(tilted.supports)).toBe(true);
+    expect(tilted.height).toBeGreaterThan(flat.height);
   });
 });

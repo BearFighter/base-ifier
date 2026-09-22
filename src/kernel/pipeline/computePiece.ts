@@ -172,6 +172,8 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   let t0 = now();
   const warnings: string[] = [];
   const source = opts.source;
+  /** the footprint the cutter asked for, before the parent clipped it (trays report a clipped rim) */
+  let askedBounds: { min: Vec2; max: Vec2 } | null = null;
   const sculptMargin = opts.sculptMargin ?? 0.1;
   const scale = opts.scale ?? 1;
   const clearance = opts.clearance ?? 0;
@@ -197,6 +199,7 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     // Own profile on every edge: the base lives inside the parent's usable plate top, its walls
     // lean in by `inset` all round, and the sculpt is cut just inside its own top outline.
     const cutterBottom = shapePolygon(params.shape, cx, cy, params.rotDeg);
+    askedBounds = polygonBounds(cutterBottom);
     bottomS = clipConvexPolygons(parent.usable, cutterBottom);
     if (bottomS.length < 3 || polygonArea(bottomS) < 1e-6) {
       throw new Error('The cutter does not overlap the parent piece.');
@@ -249,6 +252,14 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     if (clearance > 0) warnings.push('A tray is always made at its true size, so “slightly smaller for trays” is ignored for it.');
     if (trayParams.pockets.length === 0) warnings.push('There are no bases in this frame yet, so the tray has nothing to hold.');
     if (trayParams.mixedHeights) warnings.push('The bases in this frame do not all have the same edge shape, so some will not sit level in the tray.');
+    // the scene clipped the tray: the frame sits so close to the edge that there is no room for a rim.
+    // Measured per side with a real tolerance, because the layout is rounded to 0.01 mm and a
+    // hair off the corner is not something to bother anyone about.
+    if (askedBounds) {
+      const got = polygonBounds(bottomS);
+      const lost = Math.max(got.min[0] - askedBounds.min[0], askedBounds.max[0] - got.max[0], got.min[1] - askedBounds.min[1], askedBounds.max[1] - got.max[1]);
+      if (lost > 0.2) warnings.push(`There is no room for a rim on every side: the frame reaches the edge of the scene, so the tray is ${lost.toFixed(1)} mm short there. Move the frame in, or use a narrower rim.`);
+    }
     const cellRes = traySurroundCells(bottomS, trayParams.pockets);
     trayCells = cellRes.cells;
     trayThinSpan = cellRes.thinSpan;
