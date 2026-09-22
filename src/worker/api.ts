@@ -43,6 +43,31 @@ export interface SocketRequest {
   plug: boolean;
 }
 
+/**
+ * A movement tray: the slots its frame's bases leave in it, and how thick and
+ * roomy they are. Positions are in the frame shared by the tray and the bases
+ * (the scene), so the worker only has to add the scene origin.
+ */
+export interface TrayRequest {
+  /** thickness of the flat sheet under the whole tray, mm */
+  floor: number;
+  /** extra room per side in each slot, mm */
+  gap: number;
+  /** how far the surround stands above the floor: the plate height of the bases, mm */
+  plateHeight: number;
+  /** one per base in the frame, positioned in the scene's frame */
+  slots: { shape: Shape; xy: Vec2; rotDeg: number }[];
+  /** magnet holes in the floor, in the scene's frame; omitted = none */
+  magnets?: { at: Vec2[]; sizing: MagnetRequest['sizing']; floorMin: number };
+  /** the bases in the frame do not all have the same plate height, so they cannot all sit level */
+  mixedHeights?: boolean;
+  /** raised maker mark; empty = none */
+  watermark: string;
+  watermarkHeight: number;
+  /** the bases' hollow underside, so the mark can hide under one of them on a round tray */
+  underside?: { depth: number; rim: number; ringWidth: number };
+}
+
 export interface PieceChainNode {
   id: string;
   shape: Shape;
@@ -51,13 +76,15 @@ export interface PieceChainNode {
   edges: EdgeTreatment[];
   /** edge profile; omitted = the file's original slope */
   profile?: EdgeProfile;
-  role?: 'base' | 'frame' | 'leftover';
+  role?: 'base' | 'frame' | 'leftover' | 'tray';
   /** 'full' (default) takes the whole column; 'plug' takes the top `plugDepth` and the terrain keeps a socket */
   cut?: 'full' | 'plug';
   plugDepth?: number;
   plugClearance?: number;
   /** plug bases inside this piece's footprint whose sockets it keeps */
   sockets?: SocketRequest[];
+  /** set on a movement tray (role 'tray') */
+  tray?: TrayRequest;
 }
 
 /** What is under a base footprint: material thickness from the object's bottom, and terrain heights. */
@@ -128,9 +155,26 @@ export interface MeshTransfer {
   fullTriCount?: number;
 }
 
+/** What a finished movement tray turned out like: what the Bases tab and the Export tab report. */
+export interface TrayInfo {
+  floor: number;
+  plateHeight: number;
+  /** 'recess' = magnet pockets in the top face; 'through' = holes right through the floor */
+  magnetMode: 'none' | 'recess' | 'through';
+  /** the floor thickness that would take the magnets fully, mm */
+  magnetFloorWanted: number;
+  /** the biggest rectangle of floor with no surround across it: what makes a thin tray curl, mm */
+  thinSpan: { w: number; d: number };
+  /** how many convex shapes the surround was built from */
+  cells: number;
+  watermark: boolean;
+}
+
 export interface PieceGeometryTransfer {
   /** set when the base was carved out of the object (no plate): floor height in the source and thinnest material */
   carved?: { floorZ: number; thickness: number; plug: boolean };
+  /** set on a movement tray */
+  tray?: TrayInfo;
   pieceId: string;
   /** piece origin in the source frame */
   origin: Vec2;

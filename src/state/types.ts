@@ -4,7 +4,7 @@ import type { StudioDocument } from '@/kernel/studio/document';
  * against this interface; `src/state/project.ts` implements it.
  */
 import type { EdgeProfile, Shape, Vec2 } from '@/kernel/types';
-import type { MagnetSettings, ExportSettings, MagnetSlot, Piece, PieceRole, Project, WorkMode, UndersideSettings, PlugSettings } from '@/model/types';
+import type { MagnetSettings, ExportSettings, MagnetSlot, Piece, PieceRole, Project, WorkMode, UndersideSettings, PlugSettings, TraySettings } from '@/model/types';
 import type { PieceGeometryTransfer, SourceSummary, ColumnInfo } from '@/worker/api';
 
 export type ViewMode = 'top' | 'orbit' | 'underside';
@@ -118,6 +118,8 @@ export interface AppActions {
   setUndersideSettings(patch: Partial<UndersideSettings>): void;
   /** project defaults for plug cuts */
   setPlugSettings(patch: Partial<PlugSettings>): void;
+  /** movement tray settings; with `frameId` they apply to that frame's tray only */
+  setTraySettings(patch: Partial<TraySettings>, frameId?: string): void;
   /** measure the terrain under a base (cheap; cached per piece geometry) */
   fetchTerrainInfo(id: string): Promise<void>;
   setExportSettings(patch: Partial<ExportSettings>): void;

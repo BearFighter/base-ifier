@@ -32,7 +32,8 @@ export interface BaseBox {
  * lean in by a fixed amount, frames do not lean in at all.
  */
 export function insetOf(piece: Piece, project: Project): [number, number] {
-  if (piece.role === 'frame') return [0, 0];
+  // a frame is a reference outline and a tray holds nothing inside it: neither leans in
+  if (piece.role === 'frame' || piece.role === 'tray') return [0, 0];
   const src = project.sources[piece.sourceId];
   const sx = src ? src.normalization.topScale[0] : 0.92, sy = src ? src.normalization.topScale[1] : 0.92;
   const { w, d } = pieceSize(piece);
@@ -69,8 +70,10 @@ export function useBases() {
       setView: s.setView,
       setDefaultProfile: s.setDefaultProfile,
       setMode: s.setMode,
+      setTraySettings: s.setTraySettings,
     })),
   );
+  const trayDefaults = useAppStore((s) => s.project.tray);
 
   const project = useAppStore((s) => s.project);
   const boxes = useMemo<BaseBox[]>(() => {
@@ -90,7 +93,7 @@ export function useBases() {
       const c = pieceOriginInSource(project, p.id);
       const rect: Rect = p.parentId === null ? rootRect : { x: c[0] - w / 2, y: c[1] - d / 2, w, h: d };
       const ins = insetOf(p, project);
-      const usable = p.role === 'frame' ? rect : shrink(rect, [ins[0] + USABLE_INSET, ins[1] + USABLE_INSET]);
+      const usable = p.role === 'frame' || p.role === 'tray' ? rect : shrink(rect, [ins[0] + USABLE_INSET, ins[1] + USABLE_INSET]);
       out.push({ id: p.id, piece: p, rect, usable, depth, parentRect });
       for (const cid of p.children) {
         const child = pieces[cid];
@@ -105,5 +108,5 @@ export function useBases() {
   const selectedSize = selected ? pieceSize(selected) : null;
   const selectedBox = selectedId ? boxes.find((b) => b.id === selectedId) : undefined;
 
-  return { selectedId, selected, selectedSize, selectedBox, root, rootId, rootSize, rootGeom, selectedGeom, boxes, showHelp, mode, workMode, defaultProfile, baseified, busy, pieces, ...actions };
+  return { selectedId, selected, selectedSize, selectedBox, root, rootId, rootSize, rootGeom, selectedGeom, boxes, showHelp, mode, workMode, defaultProfile, trayDefaults, baseified, busy, pieces, ...actions };
 }

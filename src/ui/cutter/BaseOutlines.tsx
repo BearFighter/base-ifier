@@ -17,6 +17,8 @@ export interface BaseOutlinesProps {
   /** commit a move/resize; rect is in big-base coordinates */
   onCommit(id: string, rect: Rect): void;
   minSize?: number;
+  /** Movement tray mode, before Base-ify: where each frame's tray will reach */
+  trayRims?: Rect[];
 }
 
 type HandleName = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -32,7 +34,12 @@ interface DragState {
   moved: boolean;
 }
 
-export function BaseOutlines({ mapping, boxes, selectedId, onSelect, onCommit, minSize = 5 }: BaseOutlinesProps) {
+/** Siblings that share the parent, ignoring the tray (which lies over everything by design). */
+function siblingsOf(boxes: BaseBox[], box: BaseBox): BaseBox[] {
+  return boxes.filter((b) => b.piece.parentId === box.piece.parentId && b.id !== box.id && b.piece.role !== 'tray');
+}
+
+export function BaseOutlines({ mapping, boxes, selectedId, onSelect, onCommit, minSize = 5, trayRims }: BaseOutlinesProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [guides, setGuides] = useState<{ x: number | null; y: number | null }>({ x: null, y: null });
@@ -45,7 +52,7 @@ export function BaseOutlines({ mapping, boxes, selectedId, onSelect, onCommit, m
   };
 
   const begin = (e: React.PointerEvent, box: BaseBox, kind: DragState['kind']) => {
-    if (box.depth === 0) return; // the big base itself cannot be moved
+    if (box.depth === 0 || box.piece.role === 'tray') return; // the big base and the tray are not dragged
     e.stopPropagation();
     e.preventDefault();
     onSelect(box.id);
@@ -63,7 +70,7 @@ export function BaseOutlines({ mapping, boxes, selectedId, onSelect, onCommit, m
     const container = { w: parent.w, d: parent.h };
     const toLocal = (r: Rect): Rect => ({ x: r.x - (parent.x + parent.w / 2), y: r.y - (parent.y + parent.h / 2), w: r.w, h: r.h });
     const toRoot = (r: Rect): Rect => ({ x: r.x + parent.x + parent.w / 2, y: r.y + parent.y + parent.h / 2, w: r.w, h: r.h });
-    const siblings = boxes.filter((b) => b.piece.parentId === box.piece.parentId && b.id !== box.id).map((b) => toLocal(b.rect));
+    const siblings = siblingsOf(boxes, box).map((b) => toLocal(b.rect));
     const lines = snapLines(container, siblings);
     const noSnap = e.altKey;
     let r = toLocal({ ...drag.startRect });
@@ -109,7 +116,8 @@ export function BaseOutlines({ mapping, boxes, selectedId, onSelect, onCommit, m
   };
 
   const px = (x: number, y: number) => mmToPx(mapping, x, y);
-  const ordered = [...boxes].sort((a, b) => a.depth - b.depth);
+  // the tray is drawn before the frame and the bases it holds, so it never covers them
+  const ordered = [...boxes].sort((a, b) => a.depth - b.depth || (a.piece.role === 'tray' ? -1 : 0) - (b.piece.role === 'tray' ? -1 : 0));
 
   return (
     <svg
@@ -124,34 +132,38 @@ export function BaseOutlines({ mapping, boxes, selectedId, onSelect, onCommit, m
     >
       {guides.x !== null && <line x1={px(guides.x, 0)[0]} x2={px(guides.x, 0)[0]} y1={0} y2={mapping.height} stroke="#ffb347" strokeWidth={1} />}
       {guides.y !== null && <line y1={px(0, guides.y)[1]} y2={px(0, guides.y)[1]} x1={0} x2={mapping.width} stroke="#ffb347" strokeWidth={1} />}
+      {(trayRims ?? []).map((r, i) => {
+        const rp = rectToPx(mapping, r);
+        return <rect key={`rim${i}`} {...rp} fill="none" stroke="rgba(198,160,72,0.75)" strokeWidth={1.5} strokeDasharray="12 4" style={{ pointerEvents: 'none' }} />;
+      })}
       {ordered.map((box) => {
         const isRoot = box.depth === 0;
         const rect = drag && drag.id === box.id ? drag.rect : box.rect;
         const rp = rectToPx(mapping, rect);
         const selected = box.id === selectedId;
-        const siblings = boxes.filter((b) => b.piece.parentId === box.piece.parentId && b.id !== box.id);
-        const overlaps = !isRoot && siblings.some((s) => rectsOverlap(s.rect, rect));
+        const isTray = box.piece.role === 'tray';
+        const overlaps = !isRoot && !isTray && siblingsOf(boxes, box).some((s) => rectsOverlap(s.rect, rect));
         const hasKids = box.piece.children.length > 0;
         const isFrame = box.piece.role === 'frame';
         const isLeftover = box.piece.role === 'leftover';
-        const stroke = isRoot ? 'rgba(120,180,255,0.45)' : overlaps ? '#ff6b6b' : selected ? '#ffd166' : isFrame ? 'rgba(255,255,255,0.85)' : isLeftover ? 'rgba(200,200,120,0.8)' : hasKids ? 'rgba(140,230,160,0.9)' : '#7cc4ff';
-        const fill = isRoot ? 'none' : selected ? 'rgba(255,209,102,0.16)' : isFrame ? 'rgba(255,255,255,0.03)' : isLeftover ? 'rgba(200,200,120,0.08)' : 'rgba(124,196,255,0.10)';
+        const stroke = isRoot ? 'rgba(120,180,255,0.45)' : overlaps ? '#ff6b6b' : selected ? '#ffd166' : isTray ? 'rgba(198,160,72,0.9)' : isFrame ? 'rgba(255,255,255,0.85)' : isLeftover ? 'rgba(200,200,120,0.8)' : hasKids ? 'rgba(140,230,160,0.9)' : '#7cc4ff';
+        const fill = isRoot || isTray ? 'none' : selected ? 'rgba(255,209,102,0.16)' : isFrame ? 'rgba(255,255,255,0.03)' : isLeftover ? 'rgba(200,200,120,0.08)' : 'rgba(124,196,255,0.10)';
         const label = `${isFrame ? 'Frame: ' : ''}${box.piece.name} · ${fmt(rect.w)} × ${fmt(rect.h)}`;
         const showLabel = rp.width > 40 && rp.height > 16;
         return (
-          <g key={box.id} style={{ pointerEvents: isRoot ? 'none' : 'auto' }}>
-            <title>{isRoot ? box.piece.name : `${label} — click to select, drag to move, drag a corner to resize`}</title>
+          <g key={box.id} style={{ pointerEvents: isRoot || isTray ? 'none' : 'auto' }}>
+            <title>{isRoot || isTray ? box.piece.name : `${label} — click to select, drag to move, drag a corner to resize`}</title>
             {box.piece.shape.kind === 'rect' || isRoot ? (
-              <rect {...rp} fill={fill} stroke={stroke} strokeWidth={selected ? 2 : isFrame ? 2 : 1.5} strokeDasharray={isRoot ? '4 3' : isFrame ? '8 4' : undefined} style={{ cursor: isRoot ? 'default' : 'move' }} onPointerDown={(e) => begin(e, box, 'move')} />
+              <rect {...rp} fill={fill} stroke={stroke} strokeWidth={selected ? 2 : isFrame || isTray ? 2 : 1.5} strokeDasharray={isRoot ? '4 3' : isTray ? '12 4' : isFrame ? '8 4' : undefined} style={{ cursor: isRoot || isTray ? 'default' : 'move' }} onPointerDown={(e) => begin(e, box, 'move')} />
             ) : (
-              <ellipse cx={rp.x + rp.width / 2} cy={rp.y + rp.height / 2} rx={rp.width / 2} ry={rp.height / 2} fill={fill} stroke={stroke} strokeWidth={selected ? 2 : 1.5} style={{ cursor: 'move' }} onPointerDown={(e) => begin(e, box, 'move')} />
+              <ellipse cx={rp.x + rp.width / 2} cy={rp.y + rp.height / 2} rx={rp.width / 2} ry={rp.height / 2} fill={fill} stroke={stroke} strokeWidth={selected ? 2 : 1.5} strokeDasharray={isTray ? '12 4' : undefined} style={{ cursor: isTray ? 'default' : 'move' }} onPointerDown={(e) => begin(e, box, 'move')} />
             )}
             {!isRoot && showLabel && (
               <text x={rp.x + 5} y={rp.y + 13} fill={stroke} fontSize={11} style={{ pointerEvents: 'none', userSelect: 'none' }}>
                 {label}
               </text>
             )}
-            {selected && !isRoot && HANDLES.map((h) => {
+            {selected && !isRoot && !isTray && HANDLES.map((h) => {
               const [hx, hy] = handlePos(rp, h, mapping.mirrored);
               return (
                 <rect key={h} x={hx - 4} y={hy - 4} width={8} height={8} fill="#ffd166" stroke="#222" strokeWidth={1} style={{ cursor: cursorFor(h, mapping.mirrored) }} onPointerDown={(e) => begin(e, box, h)} />

@@ -122,7 +122,8 @@ function PreviewMeshes() {
     const w = board.shape.w + 2 * m, d = board.shape.d + 2 * m;
     const g = board.shape.kind === 'ellipse' ? new THREE.CylinderGeometry(0.5, 0.5, board.plateTop, 128) : new THREE.BoxGeometry(1, board.plateTop, 1);
     g.rotateX(Math.PI / 2);
-    plateMesh.geometry.dispose();
+    // EMPTY is the shared stand-in every mesh starts on; only the plate's own geometry is ours to throw away
+    if (plateMesh.geometry !== EMPTY) plateMesh.geometry.dispose();
     plateMesh.geometry = g;
     plateMesh.scale.set(w, d, 1);
     plateMesh.position.set(0, 0, board.plateTop / 2);

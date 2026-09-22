@@ -94,14 +94,18 @@ interface StudioState {
   /** pick a prop in the view (null clears the selection) */
   select(id: string | null): void;
   setTransformMode(mode: TransformMode): void;
-  /** set one prop's numbers directly; the prop becomes hand-placed, in one undo step */
-  editProp(id: string, patch: PropEdit): void;
+  /**
+   * Set one prop's numbers directly; the prop becomes hand-placed, in one undo
+   * step. `coalesce` names the box being typed in, so a burst of keystrokes in
+   * the same box stays ONE undo step.
+   */
+  editProp(id: string, patch: PropEdit, options?: { coalesce?: string }): void;
   /** finish a drag of the handle in the view: same effect as typing the numbers */
   commitPropTransform(id: string, t: PropTransform): void;
   /** take one prop off the board */
   removeProp(id: string): void;
   /** edit the document (immer recipe); previews refresh after a short pause */
-  update(recipe: (d: StudioDocument) => void, options?: { history?: boolean }): void;
+  update(recipe: (d: StudioDocument) => void, options?: { history?: boolean; coalesce?: string }): void;
   undo(): void;
   redo(): void;
   /** make sure the worker holds geometry for every library item whose file we have */
@@ -140,6 +144,14 @@ let pendingReason: string | null = null;
 let rescattering = false;
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 let noticeSerial = 0;
+/**
+ * Typing a number is one change, not one change per key. Edits that name the
+ * same box (`coalesce`) and follow one another this closely share a single
+ * history entry, so one Undo takes back "-35" rather than the "5" of it.
+ */
+const COALESCE_MS = 1500;
+let coalesceKey: string | null = null;
+let coalesceAt = 0;
 
 /**
  * Everything the scatter depends on. When this changes (board size, preset,
@@ -159,6 +171,28 @@ function scatterKey(d: StudioDocument): string {
     d.rules.sink,
     (d.library ?? []).map((it) => [it.id, it.family, it.weight ?? 1]),
   ]);
+}
+
+/**
+ * The board itself. Change it and every prop has to be put back on it: a prop
+ * left at its old spot after the board shrank hangs in mid air beside it, which
+ * is the "floating parts I can't move" the user hit.
+ */
+function boardKey(d: StudioDocument): string {
+  return JSON.stringify([d.board.shape, d.board.margin ?? 0]);
+}
+
+/** Put every prop back on the board after a board change (no-op when they all already are). */
+function keepPropsOnBoard(doc: StudioDocument): StudioDocument {
+  if (doc.props.length === 0) return doc;
+  const at = doc.props.map((p) => clampPropToBoard(doc, p.x, p.y));
+  if (at.every(([x, y], i) => x === doc.props[i].x && y === doc.props[i].y)) return doc;
+  return produce(doc, (d) => {
+    d.props.forEach((p, i) => {
+      p.x = Math.round(at[i][0] * 1000) / 1000;
+      p.y = Math.round(at[i][1] * 1000) / 1000;
+    });
+  });
 }
 
 /**
@@ -201,6 +235,7 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
 
   open(rawDoc) {
     const doc = normalizeStudioDocument(rawDoc);
+    coalesceKey = null;
     set({ doc, tab: 'board', preview: null, dirty: true, error: null, confirmRemove: null, notice: null, history: [], future: [], selectedPropId: null });
     void (async () => {
       // files added earlier in this session are still here; a re-opened scene asks for the rest
@@ -222,6 +257,7 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
     noticeSerial++;
     pendingRescatter = false;
     pendingReason = null;
+    coalesceKey = null;
     set({ doc: null, preview: null, previewing: false, dirty: false, confirmRemove: null, notice: null, selectedPropId: null });
   },
 
@@ -235,7 +271,7 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
 
   setTransformMode(transformMode) { set({ transformMode }); },
 
-  editProp(id, patch) {
+  editProp(id, patch, options) {
     const doc = get().doc;
     if (!doc) return;
     const prop = doc.props.find((p) => p.id === id);
@@ -253,7 +289,7 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
       if (patch.sink !== undefined) t.sink = Math.max(0, Math.min(20, patch.sink));
       // a prop the user has touched is theirs: placing the others again never moves it
       t.scattered = false;
-    });
+    }, { coalesce: options?.coalesce });
     set({ selectedPropId: id });
   },
 
@@ -276,9 +312,16 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
   update(recipe, options) {
     const doc = get().doc;
     if (!doc) return;
-    const next = produce(doc, recipe);
+    let next = produce(doc, recipe);
     if (next === doc) return;
-    const history = options?.history === false ? get().history : [...get().history.slice(-49), doc];
+    // a new board size or shape drags every prop back onto it, in the SAME edit,
+    // so one undo takes back the resize and the props it moved together
+    if (boardKey(doc) !== boardKey(next)) next = keepPropsOnBoard(next);
+    // one box being typed in keeps adding to the same undo step for a moment
+    const key = options?.coalesce ?? null;
+    const merge = key !== null && key === coalesceKey && Date.now() - coalesceAt < COALESCE_MS && get().history.length > 0;
+    const history = options?.history === false || merge ? get().history : [...get().history.slice(-49), doc];
+    if (options?.history !== false) { coalesceKey = key; coalesceAt = Date.now(); }
     const selectedPropId = next.props.some((p) => p.id === get().selectedPropId) ? get().selectedPropId : null;
     set({ doc: next, dirty: true, history, future: [], selectedPropId });
     // keep the project's copy current so it saves with the file
@@ -314,6 +357,7 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
     const prev = history[history.length - 1];
     pendingRescatter = false;
     pendingReason = null;
+    coalesceKey = null;
     get().dismissNotice();
     set({ doc: prev, history: history.slice(0, -1), future: [doc, ...get().future].slice(0, 50), dirty: true });
     useAppStore.getState().saveStudioDocument(prev);
@@ -326,6 +370,7 @@ export const useStudioStore = create<StudioState>()((set, get) => ({
     const next = future[0];
     pendingRescatter = false;
     pendingReason = null;
+    coalesceKey = null;
     get().dismissNotice();
     set({ doc: next, future: future.slice(1), history: [...get().history, doc], dirty: true });
     useAppStore.getState().saveStudioDocument(next);

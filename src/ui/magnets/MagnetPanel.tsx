@@ -217,7 +217,7 @@ export function MagnetPanel() {
       <div className="panel-subtitle">Settings for every base. Bases with slots that no longer fit show a ⚠ in the list on the left.</div>
       <UndersideSection />
 
-      <Hint>Magnets sit under every base so it sticks to a steel sheet or movement tray. Placed automatically; you rarely need to touch this.</Hint>
+      <Hint>Magnets sit under every base so it sticks to a steel sheet or movement tray. Placed automatically; you rarely need to touch this. In Movement tray mode the tray gets a matching hole under every base, so the magnets have to be thinner than the tray floor to stay inside it.</Hint>
 
       <Field label="Magnet size" help="Measure your magnets; disc magnets are sold as diameter × thickness.">
         <select value={isCustomSize ? 'custom' : `${magnet.dia}x${magnet.thick}`} onChange={(e) => handlePresetChange(e.target.value)}>
@@ -325,6 +325,8 @@ export function MagnetPanel() {
       <div className="panel-divider" />
       {!piece ? (
         <div className="panel-empty">Select a base to edit its magnets.</div>
+      ) : piece.role === 'tray' ? (
+        <Hint>This tray gets a magnet hole under each base automatically, lined up with that base&rsquo;s own magnet. Turn them off in the tray settings on the Bases tab. Check which way round the magnets go before you glue them: the tray and the base have to attract, not push apart.</Hint>
       ) : (
         <PieceMagnetEditor piece={piece} magnet={magnet} onChange={setPieceMagnets} />
       )}

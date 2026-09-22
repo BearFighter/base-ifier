@@ -1,11 +1,15 @@
 /** Right-column panel: view/edit the selected piece. */
 import React, { useEffect } from 'react';
 import type { EdgeTreatment, Shape } from '@/kernel/types';
-import { PROFILE_CHOICES, profileId } from '@/model/defaults';
+import { PROFILE_CHOICES, profileId, TRAY_FLOOR_MAX, TRAY_FLOOR_MIN } from '@/model/defaults';
+import type { TraySettings } from '@/model/types';
 import { pieceSize } from '@/model/tree';
 import { useAppStore } from '@/state/project';
-import { Details } from '@/ui/common/Field';
+import { traySettingsFor } from '@/state/chain';
+import { Details, Field } from '@/ui/common/Field';
 import { Hint } from '@/ui/common/Hint';
+import { TRAY_HELP, TrayFloorCallout, TrayMagnetCallout } from '@/ui/tray/TrayBits';
+import type { TrayInfo } from '@/worker/api';
 import { formatCm3, formatWD, positionPhrase } from '@/ui/common/copy';
 import { formatMm } from '@/ui/util/format';
 
@@ -72,6 +76,49 @@ function CutSection({
   );
 }
 
+/**
+ * The tray settings, shown on the frame that holds the bases and on the tray
+ * itself. Edits go to that frame, so two frames on one scene can have different
+ * trays; leaving the frame out would change every tray in the project.
+ */
+function TraySection({ frameId, tray, settings, onChange }: { frameId: string | undefined; tray: TrayInfo | undefined; settings: TraySettings; onChange: (patch: Partial<TraySettings>) => void }) {
+  void frameId;
+  const span = tray ? Math.max(tray.thinSpan.w, tray.thinSpan.d) : 0;
+  return (
+    <Details summary={`Tray: ${settings.floor} mm floor, ${settings.edge} mm rim`} defaultOpen>
+      <Hint>{TRAY_HELP.intro}</Hint>
+      <Field label="Tray floor" unit="mm" help={TRAY_HELP.floor}>
+        <input type="number" step={0.1} min={TRAY_FLOOR_MIN} max={TRAY_FLOOR_MAX} value={settings.floor} onChange={(e) => { const v = Number(e.target.value); if (v >= TRAY_FLOOR_MIN && v <= TRAY_FLOOR_MAX) onChange({ floor: v }); }} />
+      </Field>
+      <TrayMagnetCallout tray={tray} onSetFloor={(v) => onChange({ floor: v })} />
+      <TrayFloorCallout tray={tray} floor={settings.floor} onSetFloor={(v) => onChange({ floor: v })} />
+      <Field label="Room around each base" unit="mm" help={TRAY_HELP.gap}>
+        <input type="number" step={0.05} min={0} max={1} value={settings.gap} onChange={(e) => { const v = Number(e.target.value); if (v >= 0 && v <= 1) onChange({ gap: v }); }} />
+      </Field>
+      <Field label="Rim" unit="mm" help={TRAY_HELP.edge}>
+        <input type="number" step={0.5} min={0} max={20} value={settings.edge} onChange={(e) => { const v = Number(e.target.value); if (v >= 0 && v <= 20) onChange({ edge: v }); }} />
+      </Field>
+      <label className="radio-row" title={TRAY_HELP.magnets}>
+        <input type="checkbox" checked={settings.magnets} onChange={(e) => onChange({ magnets: e.target.checked })} />
+        <span>Magnets in the floor</span>
+      </label>
+      <Hint>{TRAY_HELP.magnets}</Hint>
+      {tray && (
+        <>
+          <div className="field-row">
+            <span>Magnets</span>
+            <span>{tray.magnetMode === 'none' ? 'none' : tray.magnetMode === 'recess' ? 'sit fully inside the floor' : 'go right through the floor'}</span>
+          </div>
+          <div className="field-row">
+            <span>Widest bare floor</span>
+            <span>{Math.round(span)} mm</span>
+          </div>
+        </>
+      )}
+    </Details>
+  );
+}
+
 function EdgeRow({
   label,
   treatment,
@@ -126,9 +173,22 @@ export function PiecePanel() {
   const workMode = useAppStore((s) => s.project.mode);
   const terrain = useAppStore((s) => (selectedId ? s.terrain[selectedId] : undefined));
   const fetchTerrainInfo = useAppStore((s) => s.fetchTerrainInfo);
+  const setTraySettings = useAppStore((s) => s.setTraySettings);
+  // the tray settings belong to the frame: shown on the frame itself and on its tray
+  const trayFrameId = useAppStore((s) => {
+    const p = selectedId ? s.project.pieces[selectedId] : null;
+    if (!p) return undefined;
+    if (p.role === 'tray') return p.trayOf;
+    return p.role === 'frame' && s.project.mode === 'tray' ? p.id : undefined;
+  });
+  const traySettings = useAppStore((s) => traySettingsFor(s.project, trayFrameId ? s.project.pieces[trayFrameId] : undefined));
+  const trayGeom = useAppStore((s) => {
+    const t = Object.values(s.project.pieces).find((p) => p.role === 'tray' && p.trayOf === trayFrameId);
+    return t ? s.geometry[t.id]?.data?.tray : undefined;
+  });
   const sizeKey = piece ? `${piece.shape.kind}|${piece.shape.w}|${piece.shape.d}|${piece.xy[0]}|${piece.xy[1]}|${piece.rotDeg}` : '';
   useEffect(() => {
-    if (piece && piece.parentId !== null && piece.role !== 'frame') void fetchTerrainInfo(piece.id);
+    if (piece && piece.parentId !== null && piece.role !== 'frame' && piece.role !== 'tray') void fetchTerrainInfo(piece.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [piece?.id, sizeKey]);
 
@@ -142,6 +202,7 @@ export function PiecePanel() {
   }
 
   const isRoot = piece.parentId === null;
+  const isTray = piece.role === 'tray';
   const size = pieceSize(piece);
   const data = geom?.data;
 
@@ -152,11 +213,13 @@ export function PiecePanel() {
 
   const subtitle = isRoot
     ? `Whole base, ${formatWD(size.w, size.d)}`
-    : `${formatWD(size.w, size.d)} base cut from ${parent?.name ?? 'the big base'}`;
+    : isTray
+      ? `${formatWD(size.w, size.d)} tray, made from the frame it holds`
+      : `${formatWD(size.w, size.d)} base cut from ${parent?.name ?? 'the big base'}`;
 
   return (
     <div className="panel piece-panel">
-      <div className="panel-title">Base</div>
+      <div className="panel-title">{isTray ? 'Tray' : 'Base'}</div>
 
       <input
         className="piece-title-input"
@@ -168,13 +231,17 @@ export function PiecePanel() {
 
       {!isRoot && <div className="piece-position">{positionPhrase(piece.xy)}</div>}
 
+      {trayFrameId && (
+        <TraySection frameId={trayFrameId} tray={trayGeom} settings={traySettings} onChange={(patch) => setTraySettings(patch, trayFrameId)} />
+      )}
+
       <Details summary="Size & position">
         <div className="field-row two">
           <label className="field">
             <span>W (mm)</span>
             <input
               type="number"
-              disabled={isRoot}
+              disabled={isRoot || isTray}
               step={0.5}
               value={piece.shape.w}
               min={1}
@@ -185,7 +252,7 @@ export function PiecePanel() {
             <span>D (mm)</span>
             <input
               type="number"
-              disabled={isRoot}
+              disabled={isRoot || isTray}
               step={0.5}
               value={piece.shape.d}
               min={1}
@@ -198,7 +265,7 @@ export function PiecePanel() {
             <span>X (mm)</span>
             <input
               type="number"
-              disabled={isRoot}
+              disabled={isRoot || isTray}
               step={0.5}
               value={piece.xy[0]}
               onChange={(e) => updatePiece(piece.id, { xy: [Number(e.target.value), piece.xy[1]] })}
@@ -208,7 +275,7 @@ export function PiecePanel() {
             <span>Y (mm)</span>
             <input
               type="number"
-              disabled={isRoot}
+              disabled={isRoot || isTray}
               step={0.5}
               value={piece.xy[1]}
               onChange={(e) => updatePiece(piece.id, { xy: [piece.xy[0], Number(e.target.value)] })}
@@ -222,7 +289,7 @@ export function PiecePanel() {
               <button
                 key={r}
                 type="button"
-                disabled={isRoot}
+                disabled={isRoot || isTray}
                 className={piece.rotDeg === r ? 'active' : ''}
                 onClick={() => updatePiece(piece.id, { rotDeg: r })}
               >
@@ -233,11 +300,11 @@ export function PiecePanel() {
         </div>
       </Details>
 
-      {!isRoot && piece.role !== 'frame' && (
+      {!isRoot && piece.role !== 'frame' && !isTray && (
         <CutSection piece={piece} terrain={terrain} plugDefaults={plugDefaults} workMode={workMode} parentName={parent?.name ?? 'the scene'} onChange={(patch) => updatePiece(piece.id, patch)} />
       )}
 
-      {!isRoot && (
+      {!isRoot && !isTray && (
         <Details summary="Edge shape">
           <Hint>How the sides of this base are shaped. Sizes picked from a game's list get that game's style automatically.</Hint>
           <div className="field-col">

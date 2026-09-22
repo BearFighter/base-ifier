@@ -57,7 +57,17 @@ export function CutterOverlay() {
     B.updatePiece(id, { xy: [r2(xy[0]), r2(xy[1])], shape: { ...box.piece.shape, w: r2(rect.w), d: r2(rect.h) } });
   };
 
-  return <BaseOutlines mapping={mapping} boxes={B.boxes} selectedId={B.selectedId} onSelect={B.selectPiece} onCommit={onCommit} />;
+  // Movement tray mode, before the tray exists: show where its rim will reach
+  const trayRims = B.workMode === 'tray'
+    ? B.boxes
+        .filter((b) => b.piece.role === 'frame' && !B.boxes.some((t) => t.piece.role === 'tray' && t.piece.trayOf === b.id))
+        .map((b) => {
+          const edge = { ...project.tray, ...(b.piece.tray ?? {}) }.edge;
+          return { x: b.rect.x - edge, y: b.rect.y - edge, w: b.rect.w + 2 * edge, h: b.rect.h + 2 * edge };
+        })
+    : undefined;
+
+  return <BaseOutlines mapping={mapping} boxes={B.boxes} selectedId={B.selectedId} onSelect={B.selectPiece} onCommit={onCommit} trayRims={trayRims} />;
 }
 
 function r2(v: number): number {

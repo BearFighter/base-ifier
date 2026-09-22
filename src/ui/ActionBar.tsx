@@ -22,7 +22,8 @@ export function ActionBar() {
       previewIds: s.previewIds,
       selectedId: s.project.selectedId,
       hasBase: Object.keys(s.project.sources).length > 0,
-      count: Object.values(s.project.pieces).filter((p) => p.parentId !== null && p.children.length === 0).length,
+      // the tray is made for you at Base-ify, so it must not make the count jump afterwards
+      count: Object.values(s.project.pieces).filter((p) => p.parentId !== null && p.children.length === 0 && p.role !== 'tray').length,
       mode: s.view.mode,
       showSculpt: s.view.showSculpt,
     })),

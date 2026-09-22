@@ -18,11 +18,42 @@ import { cutColumnAbove, carveSockets, plugFloor, materialThickness } from './pl
 import type { SocketSpec } from './plug';
 import { addRing, addWatermark, placeWatermark, ringFor, MIN_CEILING } from '../body/hollow';
 import type { KeepOutCircle } from '../body/hollow';
+import { offsetEdges, slotWallWarnings, traySurroundCells } from '../tray/cells';
+import type { TrayCell } from '../tray/cells';
+import { buildTray } from '../tray/buildTray';
 import { SoupBuilder } from '../types';
 import { transformSoup } from '../mesh/transform';
 import { signedVolume } from '../mesh/volume';
 import { boundsOfPositions, boundsOfSoup } from '../mesh/bbox';
 import type { PreparedSource } from '../source/prepareSource';
+
+/**
+ * A movement tray: a thin floor with a raised surround, and an opening for every
+ * base in the frame it belongs to. Everything is in the SOURCE frame, like the
+ * outlines; `computePiece` moves it into the piece's own frame.
+ */
+export interface TrayParams {
+  /** thickness of the flat floor under the whole tray, mm */
+  floor: number;
+  /** how far the surround stands above the floor: the plate height of the bases in it, mm */
+  plateHeight: number;
+  /** the slot openings, already grown by the gap (source frame) */
+  pockets: Polygon2[];
+  /** magnet slots in the floor, one per base, at true size (source frame) */
+  magnets?: MagnetSlotSpec[];
+  /** material the floor keeps under a recessed magnet, mm */
+  magnetFloorMin?: number;
+  /** gap per side already built into the pockets, mm */
+  gap?: number;
+  /** how close a slot may come to the tray's outer edge before it is reported, mm */
+  minWall?: number;
+  watermark?: string;
+  watermarkHeight?: number;
+  /** the bases' hollow underside, so a mark can hide under one of them */
+  underside?: { depth: number; rim: number; ringWidth: number };
+  /** the bases in this frame do not all have the same edge shape, so they cannot all sit level */
+  mixedHeights?: boolean;
+}
 
 export interface PieceParams {
   shape: Shape;
@@ -34,13 +65,15 @@ export interface PieceParams {
   /** edge profile of this base; default 'original' */
   profile?: EdgeProfile;
   /** a 'frame' is a reference outline: bases inside it are clipped to its footprint, not to a plate top */
-  role?: 'base' | 'frame' | 'leftover';
+  role?: 'base' | 'frame' | 'leftover' | 'tray';
   /** 'full' (default) takes the whole column; 'plug' takes only the top `plugDepth` and the terrain keeps a socket */
   cut?: 'full' | 'plug';
   plugDepth?: number;
   plugClearance?: number;
   /** pockets left by plug bases inside this piece's footprint (source frame) */
   sockets?: SocketSpec[];
+  /** set on a movement tray (role 'tray') */
+  tray?: TrayParams;
 }
 
 /** Children are placed at least this far inside their parent's plate top, so their cuts never graze the parent's cut faces. */
@@ -97,6 +130,23 @@ export interface PieceResult {
   underside?: { rim: Polygon2; depth: number; watermark: boolean };
   /** set when the base was carved out of the object itself (no plate): its floor in the source frame and its thinnest material */
   carved?: { floorZ: number; thickness: number; plug: boolean };
+  /** set on a movement tray: everything the export and the UI need, in the piece's own frame */
+  tray?: {
+    floor: number;
+    plateHeight: number;
+    /** slot openings, local frame */
+    pockets: Polygon2[];
+    /** magnet holes in the floor, local frame */
+    magnets: MagnetSlotSpec[];
+    magnetMode: 'none' | 'recess' | 'through';
+    /** the floor thickness that would take the magnets fully, mm */
+    magnetFloorWanted: number;
+    /** the biggest rectangle of floor with no surround across it, mm */
+    thinSpan: { w: number; d: number };
+    /** how many convex shapes the surround was built from */
+    cells: number;
+    watermark: boolean;
+  };
 }
 
 /** Frame of the source itself (used as the parent of root pieces). */
@@ -131,7 +181,12 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   // --- cutter outlines (source frame)
   const cx = parent.origin[0] + params.xy[0];
   const cy = parent.origin[1] + params.xy[1];
-  const profile: EdgeProfile = params.profile ?? { kind: 'original' };
+  // A tray is always a straight-sided plate whose height is its floor plus the surround,
+  // which is what makes a slotted base sit flush with it at any floor thickness.
+  const trayParams = params.role === 'tray' ? params.tray : undefined;
+  const profile: EdgeProfile = trayParams
+    ? { kind: 'inset', inset: 0, height: trayParams.floor + trayParams.plateHeight }
+    : (params.profile ?? { kind: 'original' });
   let bottomS: Polygon2, topS: Polygon2;
   let sculptCutter: Polygon2 | null = null;
   let plateTopSource = parent.outline.plateTop;
@@ -173,7 +228,7 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   const bb = polygonBounds(bottomS);
   const origin: Vec2 = [(bb.min[0] + bb.max[0]) / 2, (bb.min[1] + bb.max[1]) / 2];
   const size = { w: bb.max[0] - bb.min[0], d: bb.max[1] - bb.min[1] };
-  const usableS = params.role === 'frame' ? bottomS : insetConvex(topS, USABLE_INSET);
+  const usableS = params.role === 'frame' || trayParams ? bottomS : insetConvex(topS, USABLE_INSET);
   const frame: ParentFrame = {
     outline: { bottom: bottomS, top: topS, plateTop: plateTopSource },
     origin,
@@ -184,6 +239,29 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   if (!isRoot && frame.sculptPoly.length < 3) frame.sculptPoly = insetConvex(topS, sculptMargin);
   // --- how this base is built: on the file's plate (two-shell), carved out of the object, or on a new plate
   const objectMode = source.mode === 'generic';
+
+  // --- a movement tray: chop the surround into convex cells once. The SAME list builds
+  // the analytic tray and cuts the scene's sculpt, so the openings can never disagree.
+  let trayCells: TrayCell[] = [];
+  let trayThinSpan = { w: 0, d: 0 };
+  let trayCarveFloor: number | null = null;
+  if (trayParams) {
+    if (clearance > 0) warnings.push('A tray is always made at its true size, so “slightly smaller for trays” is ignored for it.');
+    if (trayParams.pockets.length === 0) warnings.push('There are no bases in this frame yet, so the tray has nothing to hold.');
+    if (trayParams.mixedHeights) warnings.push('The bases in this frame do not all have the same edge shape, so some will not sit level in the tray.');
+    const cellRes = traySurroundCells(bottomS, trayParams.pockets);
+    trayCells = cellRes.cells;
+    trayThinSpan = cellRes.thinSpan;
+    warnings.push(...cellRes.warnings);
+    warnings.push(...slotWallWarnings(bottomS, trayParams.pockets, trayParams.minWall));
+    if (objectMode) {
+      // the surround is the scene's own material, carved cell by cell and lifted onto the floor
+      trayCarveFloor = 0.05;
+      const mt = materialThickness(source.sculpt, source.bins, bottomS, 0);
+      if (mt.stats && !mt.flatBottom) warnings.push('The scene is not flat underneath here, so expect small gaps where the tray meets it.');
+      if (mt.stats && mt.thickness < trayParams.plateHeight) warnings.push(`The scene is only ${mt.thickness.toFixed(1)} mm thick over this tray, so its surround is lower than the bases in places.`);
+    }
+  }
   // the remainder of an object scene: the object itself with the bases' pockets and holes cut into it
   const objectRemainder = objectMode && !isRoot && params.role === 'leftover';
   const isPlug = !isRoot && params.role !== 'frame' && params.cut === 'plug';
@@ -192,7 +270,7 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   // a slice of the object standing on a plate: `floorZ` is where the slice starts in the source, `lift` how far
   // it is raised onto the plate (0 when the plate instead reaches up to material that floats above the floor)
   let slice: { floorZ: number; lift: number; plateTop: number } | null = null;
-  if (!isRoot && params.role !== 'frame' && !objectRemainder) {
+  if (!isRoot && params.role !== 'frame' && !objectRemainder && !trayParams) {
     const needed = opts.hollow ? opts.hollow.depth + MIN_CEILING : 1;
     if (isPlug) {
       const depth = Math.max(needed, params.plugDepth ?? 4);
@@ -244,6 +322,10 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     plateTopSource = 0;
     frame.outline = { bottom: bottomS, top: topS, plateTop: 0 };
     frame.sculptPoly = source.outline.bottom;
+  } else if (trayParams && trayCarveFloor !== null) {
+    // an object scene: only the floor is invented, the surround is the scene's own material
+    plateTopSource = trayParams.floor;
+    frame.outline = { bottom: bottomS, top: topS, plateTop: plateTopSource };
   } else if (objectMode && !isRoot && plateTopSource < 1) {
     // a plate under a thin object: give it a real height
     plateTopSource = 3;
@@ -251,13 +333,15 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   }
   // sculpt sits on the plate: shift it if this base's plate is a different height from the file's;
   // a carved base is shifted so its floor becomes z = 0
-  const zShift = slice ? slice.lift - slice.floorZ : carvedInfo ? -carvedInfo.floorZ : plateTopSource - source.outline.plateTop;
+  const zShift = trayParams && trayCarveFloor !== null
+    ? trayParams.floor - trayCarveFloor
+    : slice ? slice.lift - slice.floorZ : carvedInfo ? -carvedInfo.floorZ : plateTopSource - source.outline.plateTop;
   timings.outline = now() - t0; t0 = now();
 
   // --- local frame + output sizing
   let bottomL = translatePolygon(bottomS, -origin[0], -origin[1]);
   let topL = translatePolygon(topS, -origin[0], -origin[1]);
-  if (clearance > 0) {
+  if (clearance > 0 && !trayParams) {
     const b2 = insetConvex(bottomL, clearance), t2 = insetConvex(topL, clearance);
     if (b2.length >= 3 && t2.length >= 3) { bottomL = b2; topL = t2; }
     else warnings.push('Clearance is larger than the piece; ignored.');
@@ -276,7 +360,43 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   // --- body: the plate (with its hollow underside), or for carved bases only the rings + watermark
   let body: Soup;
   let underside: PieceResult['underside'];
-  if ((isRoot || objectRemainder) && objectMode) {
+  let trayInfo: PieceResult['tray'];
+  const toLocal = (p: Polygon2): Polygon2 => {
+    const l = translatePolygon(p, -origin[0], -origin[1]);
+    return scale !== 1 ? scalePolygonAbout(l, scale, scale, 0, 0) : l;
+  };
+  if (trayParams) {
+    // the tray: a floor prism with the magnet holes in it, plus one prism per surround cell.
+    // In an object scene the surround is the scene's own material, so only the floor is built here.
+    const cellsL = trayCells.map((c) => ({ ...c, poly: toLocal(c.poly) }));
+    const pocketsL = trayParams.pockets.map(toLocal);
+    const magnetsL = (trayParams.magnets ?? []).map((m) => ({ ...m, x: (m.x - origin[0]) * scale, y: (m.y - origin[1]) * scale }));
+    const res = buildTray(bottomL, trayCarveFloor !== null ? [] : cellsL, {
+      floor: trayParams.floor * scale,
+      plateHeight: trayParams.plateHeight * scale,
+      magnets: magnetsL.length ? { slots: magnetsL, floorMin: trayParams.magnetFloorMin ?? 0.6 } : undefined,
+      watermark: trayParams.watermark,
+      watermarkHeight: trayParams.watermarkHeight,
+      underside: trayParams.underside,
+      pockets: pocketsL,
+      gap: trayParams.gap,
+      // in an object scene there is no analytic surround to emboss, so the mark stays in the floor band
+      markMaxZ: trayCarveFloor !== null ? trayParams.floor * scale : undefined,
+    });
+    warnings.push(...res.warnings);
+    body = res.soup;
+    trayInfo = {
+      floor: trayParams.floor * scale,
+      plateHeight: trayParams.plateHeight * scale,
+      pockets: pocketsL,
+      magnets: magnetsL,
+      magnetMode: res.magnets,
+      magnetFloorWanted: res.magnetFloorWanted,
+      thinSpan: trayThinSpan,
+      cells: trayCells.length,
+      watermark: res.watermark,
+    };
+  } else if ((isRoot || objectRemainder) && objectMode) {
     body = { positions: new Float32Array(0), triCount: 0 };
   } else if (carvedInfo && !slice) {
     const out = new SoupBuilder(256);
@@ -327,6 +447,30 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     const col = cutColumnAbove(source.sculpt, source.bins, bottomS, carvedInfo.floorZ, { stamp: opts.stamp, hollow: hollowCap ?? undefined });
     warnings.push(...col.warnings.map((w) => 'sculpt: ' + w));
     sculpt = col.soup;
+  } else if (trayParams) {
+    // One cut per surround cell. `stamp.id` MUST be bumped before every one of them:
+    // `clipTriangles` skips triangles already stamped in this pass, so sharing one id
+    // would silently rob every cell after the first of the triangles the first touched.
+    const parts: Soup[] = [];
+    for (const cell of trayCells) {
+      if (opts.stamp) opts.stamp.id++;
+      if (trayCarveFloor !== null) {
+        // an object scene: the surround is a closed column of the scene's own material
+        const col = cutColumnAbove(source.sculpt, source.bins, cell.poly, trayCarveFloor, { stamp: opts.stamp });
+        warnings.push(...col.warnings.map((w) => 'surround: ' + w));
+        if (col.soup.triCount > 0) parts.push(col.soup);
+        continue;
+      }
+      // the scenery stops just inside each slot wall; seams keep the cell's own edge so
+      // neighbouring cells overlap instead of leaving a hairline crack across the tray
+      const inset = offsetEdges(cell.poly, cell.onPocket.map((p) => (p ? sculptMargin : 0)));
+      const poly = clipConvexPolygons(frame.sculptPoly, inset.length >= 3 ? inset : cell.poly);
+      if (poly.length < 3 || polygonArea(poly) < 1e-6) continue;
+      const cut = cutPrism(source.sculpt, source.bins, poly, { stamp: opts.stamp });
+      warnings.push(...cut.warnings.map((w) => 'sculpt: ' + w));
+      if (cut.soup.triCount > 0) parts.push(cut.soup);
+    }
+    sculpt = parts.length ? concatSoups(parts) : { positions: new Float32Array(0), triCount: 0 };
   } else {
     const cut = cutPrism(source.sculpt, source.bins, frame.sculptPoly, { stamp: opts.stamp });
     warnings.push(...cut.warnings.map((w) => 'sculpt: ' + w));
@@ -340,7 +484,7 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   }
   if (sculpt.triCount > 0) {
     sculpt = transformSoup(sculpt, { translate: [-origin[0], -origin[1], zShift] }, true);
-    if (clearance > 0) {
+    if (clearance > 0 && !trayParams) {
       // keep the sculpt inside the reduced footprint
       const poly = insetConvex(translatePolygon(frame.sculptPoly, -origin[0], -origin[1]), clearance);
       if (poly.length >= 3) {
@@ -375,6 +519,7 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     timings,
     underside,
     carved: carvedInfo,
+    tray: trayInfo,
   };
 }
 

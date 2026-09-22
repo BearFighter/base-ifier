@@ -168,6 +168,12 @@ button.link { background: none; border: none; padding: 0; color: inherit; text-d
 .callout { margin: 8px 0; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255, 179, 71, 0.6); background: rgba(255, 179, 71, 0.1); font-size: 13px; line-height: 1.4; }
 .callout button { margin-top: 6px; }
 
+/* Movement tray: the settings row in the dock, and the two one-click callouts */
+.cutter-toolbar .row.tray-callouts { flex-direction: column; align-items: stretch; gap: 0; }
+.cutter-toolbar .tray-callout { margin: 4px 0; font-size: 12px; }
+.cutter-toolbar .tray-callout button { margin-top: 4px; }
+.tray-callout.warn-callout { border-color: rgba(255, 110, 90, 0.75); background: rgba(255, 110, 90, 0.12); }
+
 /* Base Studio: the scene's own STL prop library */
 .lib-list { margin: 8px 0 4px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
 .lib-item { border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 8px; padding: 7px 8px; background: rgba(255, 255, 255, 0.035); }

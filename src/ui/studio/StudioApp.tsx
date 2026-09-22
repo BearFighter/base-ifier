@@ -5,8 +5,8 @@
  * Same rules as the cutter: no jargon, help on every setting, ids and numbers
  * in React state (meshes stay in the studio store and reach three.js by ref).
  */
-import { useEffect, useState } from 'react';
-import type { DragEvent } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
+import type { CSSProperties, DragEvent } from 'react';
 import { useAppStore } from '@/state/project';
 import { useStudioStore } from '@/studio/store';
 import type { StudioTab, TransformMode } from '@/studio/store';
@@ -41,30 +41,84 @@ function RangeRow({ value, min, max, step, onChange, format }: { value: number; 
   );
 }
 
+/** How a number is shown once the scene has taken it. */
+const shownNumber = (v: number): string => String(Math.round(v * 1000) / 1000);
+
+/**
+ * A number box you can actually type in.
+ *
+ * The box is left alone (uncontrolled) while the cursor is in it. React writes
+ * its value back into an `<input type="number">` on every render and the browser
+ * throws away anything that is not a finished number, so with the old controlled
+ * box "-" on the way to "-35" read back as "", became 0, wiped the minus sign,
+ * and "-35" came out as **+35** — in three separate undo steps. Letting the
+ * browser keep the half-typed text fixes that; the scene's own value is written
+ * back the moment the box loses focus, so a clamped or rounded number still shows.
+ *
+ * `live` (the default) hands every finished number over as it is typed, so the
+ * view follows along — the store folds the burst into one undo step. Turn it off
+ * where half a number would rearrange things: the board size, where the "1" on
+ * the way to "150" would shrink the board and drag every prop in with it.
+ */
+function DraftNumber({ value, min, max, step, live = true, title, style, onChange }: {
+  value: number;
+  min?: number;
+  max?: number;
+  step: number;
+  live?: boolean;
+  title?: string;
+  style?: CSSProperties;
+  onChange: (v: number) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const editing = useRef(false);
+  const [, bump] = useReducer((n: number) => n + 1, 0);
+  const text = shownNumber(value);
+  // show what the scene took — but never while the box is being typed in
+  useEffect(() => {
+    const el = ref.current;
+    if (el && !editing.current && el.value !== text) el.value = text;
+  });
+  const commit = (raw: string) => {
+    const v = Number(raw);
+    if (raw.trim() !== '' && Number.isFinite(v)) onChange(v);
+  };
+  return (
+    <input
+      ref={ref}
+      type="number"
+      defaultValue={text}
+      min={min}
+      max={max}
+      step={step}
+      title={title}
+      style={style}
+      onFocus={() => { editing.current = true; }}
+      onChange={(e) => { if (live) commit(e.target.value); }}
+      onBlur={(e) => { editing.current = false; commit(e.target.value); bump(); }}
+      onKeyDown={(e) => { if (e.key === 'Enter') { commit(e.currentTarget.value); e.currentTarget.blur(); } }}
+    />
+  );
+}
+
 /**
  * One number with its own name, unit and explanation. Every number the user can
  * change says what it is: the old rows of bare boxes left people guessing.
  */
-function NumberField({ label, unit, help, value, min, max, step, onChange }: {
+function NumberField({ label, unit, help, value, min, max, step, live, onChange }: {
   label: string;
-  unit: string;
+  unit?: string;
   help: string;
   value: number;
   min?: number;
   max?: number;
   step: number;
+  live?: boolean;
   onChange: (v: number) => void;
 }) {
   return (
     <Field label={label} unit={unit} help={help}>
-      <input
-        type="number"
-        min={min}
-        max={max}
-        step={step}
-        value={Math.round(value * 1000) / 1000}
-        onChange={(e) => { const v = Number(e.target.value); onChange(Number.isFinite(v) ? v : value); }}
-      />
+      <DraftNumber value={value} min={min} max={max} step={step} live={live} onChange={onChange} />
     </Field>
   );
 }
@@ -99,11 +153,11 @@ function BoardPanel() {
         </select>
       </Field>
       <div className="field-row">
-        <Field label="Width" unit="mm">
-          <input type="number" min={10} max={1000} step={1} value={shape.w} onChange={(e) => update((d) => { d.board.shape.w = Math.max(10, Math.min(1000, Number(e.target.value) || 10)); })} />
+        <Field label="Width" unit="mm" help="How wide the ground is, left to right. Press Enter or click away to use it.">
+          <DraftNumber value={shape.w} min={10} max={1000} step={1} live={false} onChange={(v) => update((d) => { d.board.shape.w = Math.max(10, Math.min(1000, v)); })} />
         </Field>
-        <Field label="Depth" unit="mm">
-          <input type="number" min={10} max={1000} step={1} value={shape.d} onChange={(e) => update((d) => { d.board.shape.d = Math.max(10, Math.min(1000, Number(e.target.value) || 10)); })} />
+        <Field label="Depth" unit="mm" help="How deep the ground is, front to back. Press Enter or click away to use it.">
+          <DraftNumber value={shape.d} min={10} max={1000} step={1} live={false} onChange={(v) => update((d) => { d.board.shape.d = Math.max(10, Math.min(1000, v)); })} />
         </Field>
       </div>
       <Field label="Shape" help="Round boards come out as ovals; everything else is a rectangle whose sides lean in very slightly, like a shop-bought base.">
@@ -113,7 +167,7 @@ function BoardPanel() {
         </select>
       </Field>
       <Field label="Room around it" unit="mm" help="Single bases and unit sizes get this much spare ground on every side, so the cut edge comes out clean. Leave it at 0 for a big board you are cutting many bases from.">
-        <input type="number" min={0} max={10} step={0.5} value={doc.board.margin ?? 0} onChange={(e) => update((d) => { d.board.margin = Math.max(0, Math.min(10, Number(e.target.value) || 0)); })} />
+        <DraftNumber value={doc.board.margin ?? 0} min={0} max={10} step={0.5} live={false} onChange={(v) => update((d) => { d.board.margin = Math.max(0, Math.min(10, v)); })} />
       </Field>
       <Hint>
         {(doc.board.margin ?? 0) > 0
@@ -193,13 +247,13 @@ function GroundPanel() {
               </div>
               <div className="field-grid">
                 <NumberField label="Left / right" unit="mm" step={1} value={s.x} help="Where it sits across the board. 0 is the middle; a bigger number moves it right."
-                  onChange={(v) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.x = v; })} />
+                  onChange={(v) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.x = v; }, { coalesce: `${s.id}:x` })} />
                 <NumberField label="Front / back" unit="mm" step={1} value={s.y} help="Where it sits up the board. 0 is the middle; a bigger number moves it towards the back."
-                  onChange={(v) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.y = v; })} />
+                  onChange={(v) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.y = v; }, { coalesce: `${s.id}:y` })} />
                 <NumberField label="Size" unit="mm" step={1} min={2} value={s.size} help="How wide a patch of ground the pattern covers."
-                  onChange={(v) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.size = Math.max(2, v); })} />
+                  onChange={(v) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.size = Math.max(2, v); }, { coalesce: `${s.id}:size` })} />
                 <NumberField label="Height" unit="mm" step={0.1} min={0} max={5} value={s.strength} help="How far the pattern stands up out of the ground."
-                  onChange={(v) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.strength = Math.max(0, Math.min(5, v)); })} />
+                  onChange={(v) => update((d) => { const t = d.ground.stamps.find((q) => q.id === s.id); if (t) t.strength = Math.max(0, Math.min(5, v)); }, { coalesce: `${s.id}:h` })} />
               </div>
             </li>
           ))}
@@ -485,15 +539,15 @@ function SelectedPropSection() {
     <Section title="Selected prop" subtitle={`${name} — drag it in the view, or set its numbers here.`}>
       <div className="field-grid">
         <NumberField label="Left / right" unit="mm" step={1} value={prop.x} help="Where it sits across the board. 0 is the middle; a bigger number moves it to the right."
-          onChange={(v) => editProp(id, { x: v })} />
+          onChange={(v) => editProp(id, { x: v }, { coalesce: `${id}:x` })} />
         <NumberField label="Front / back" unit="mm" step={1} value={prop.y} help="Where it sits up the board. 0 is the middle; a bigger number moves it towards the back."
-          onChange={(v) => editProp(id, { y: v })} />
+          onChange={(v) => editProp(id, { y: v }, { coalesce: `${id}:y` })} />
         <NumberField label="Turn" unit="degrees" step={15} value={prop.rotDeg} help="How far it is turned on the spot. 90 is a quarter turn anticlockwise."
-          onChange={(v) => editProp(id, { rotDeg: v })} />
+          onChange={(v) => editProp(id, { rotDeg: v }, { coalesce: `${id}:rot` })} />
         <NumberField label="Size" unit="×" step={0.05} min={0.1} max={10} value={prop.scale} help="1 is the STL's own size, 2 is twice as big, 0.5 is half."
-          onChange={(v) => editProp(id, { scale: v })} />
+          onChange={(v) => editProp(id, { scale: v }, { coalesce: `${id}:scale` })} />
         <NumberField label="Bury" unit="mm" step={0.1} min={0} max={20} value={prop.sink} help={`How much deeper this one goes into the ground than the rest (the scene buries everything ${sceneSink} mm on the Rules tab).`}
-          onChange={(v) => editProp(id, { sink: v })} />
+          onChange={(v) => editProp(id, { sink: v }, { coalesce: `${id}:sink` })} />
       </div>
       <Hint>
         {prop.scattered
@@ -518,10 +572,10 @@ function RulesPanel() {
   return (
     <div className="studio-panel">
       <Field label="Keep clear of the edge" unit="mm" help="Nothing is scattered this close to the edge, so the edge of the board and the cut lines stay clean.">
-        <input type="number" min={0} max={10} step={0.5} value={doc.rules.rimInset} onChange={(e) => update((dd) => { dd.rules.rimInset = Math.max(0, Number(e.target.value) || 0); })} />
+        <DraftNumber value={doc.rules.rimInset} min={0} max={10} step={0.5} live={false} onChange={(v) => update((dd) => { dd.rules.rimInset = Math.max(0, Math.min(10, v)); })} />
       </Field>
       <Field label="Sink props into the ground" unit="mm" help="Props are pushed this far into the ground so nothing floats or balances on a point.">
-        <input type="number" min={0} max={3} step={0.1} value={doc.rules.sink} onChange={(e) => update((dd) => { dd.rules.sink = Math.max(0, Number(e.target.value) || 0); })} />
+        <DraftNumber value={doc.rules.sink} min={0} max={3} step={0.1} live={false} onChange={(v) => update((dd) => { dd.rules.sink = Math.max(0, Math.min(3, v)); })} />
       </Field>
       <Field label="Tallest prop" unit="mm" help={`Props are shrunk until they fit under this height. Leave it on Auto to use the usual limit for a board this size (${cap} mm).`}>
         <div className="button-row">
@@ -530,7 +584,7 @@ function RulesPanel() {
             <option value="custom">Set</option>
           </select>
           {doc.rules.heightCap !== null && (
-            <input type="number" min={1} max={100} step={1} value={doc.rules.heightCap} onChange={(e) => update((dd) => { dd.rules.heightCap = Math.max(1, Number(e.target.value) || 1); })} />
+            <DraftNumber value={doc.rules.heightCap} min={1} max={100} step={1} live={false} onChange={(v) => update((dd) => { dd.rules.heightCap = Math.max(1, Math.min(100, v)); })} />
           )}
         </div>
       </Field>
@@ -547,14 +601,21 @@ function RulesPanel() {
           </button>
           {doc.rules.footZones.length > 0 && <button type="button" title="Removes every flat spot; the ground goes back to its normal shape" onClick={() => update((dd) => { dd.rules.footZones = []; })}>Clear</button>}
         </div>
-        <ul className="prop-list">
+        <ul className="card-list">
           {doc.rules.footZones.map((z, i) => (
-            <li key={i}>
-              <span>Flat spot {i + 1}</span>
-              <input type="number" title="x, mm" step={1} value={z.x} style={{ width: 52 }} onChange={(e) => update((dd) => { dd.rules.footZones[i].x = Number(e.target.value) || 0; })} />
-              <input type="number" title="y, mm" step={1} value={z.y} style={{ width: 52 }} onChange={(e) => update((dd) => { dd.rules.footZones[i].y = Number(e.target.value) || 0; })} />
-              <input type="number" title="radius, mm" step={0.5} min={3} value={z.r} style={{ width: 52 }} onChange={(e) => update((dd) => { dd.rules.footZones[i].r = Math.max(3, Number(e.target.value) || 3); })} />
-              <button type="button" className="icon-button" title="Remove" onClick={() => update((dd) => { dd.rules.footZones.splice(i, 1); })}>×</button>
+            <li key={i} className="card-item">
+              <div className="card-head">
+                <span className="card-name">Flat spot {i + 1}</span>
+                <button type="button" className="icon-button" title="Take this flat spot off the ground" onClick={() => update((dd) => { dd.rules.footZones.splice(i, 1); })}>×</button>
+              </div>
+              <div className="field-grid">
+                <NumberField label="Left / right" unit="mm" step={1} live={false} value={z.x} help="Where the flat spot sits across the board. 0 is the middle; a bigger number moves it right."
+                  onChange={(v) => update((dd) => { dd.rules.footZones[i].x = v; })} />
+                <NumberField label="Front / back" unit="mm" step={1} live={false} value={z.y} help="Where the flat spot sits up the board. 0 is the middle; a bigger number moves it towards the back."
+                  onChange={(v) => update((dd) => { dd.rules.footZones[i].y = v; })} />
+                <NumberField label="Size across" unit="mm" step={1} min={6} live={false} value={Math.round(z.r * 20) / 10} help="How wide the levelled circle is — a 25 mm base wants about 14 mm."
+                  onChange={(v) => update((dd) => { dd.rules.footZones[i].r = Math.max(3, v / 2); })} />
+              </div>
             </li>
           ))}
         </ul>

@@ -3,13 +3,18 @@
  *  - Single base: place one base on the big base.
  *  - Diorama: add bases straight onto the big base; leftovers are kept at Base-ify.
  *  - Multibase: place a unit frame on the big base, then add bases inside the frame.
+ *  - Movement tray: the same, and every base also leaves a slot in a tray.
  * Nothing is cut here; that happens when you press Base-ify.
  */
 import { useMemo, useState } from 'react';
 import type { Shape } from '@/kernel/types';
+import { PROFILE_FLAT } from '@/kernel/types';
 import { SYSTEMS, allPresets, presetLabel, type BasePreset } from '@/model/presets';
-import { profileForSystem } from '@/model/defaults';
+import { profileForSystem, TRAY_FLOOR_MAX, TRAY_FLOOR_MIN } from '@/model/defaults';
+import { usesFrames } from '@/model/rules';
 import { largestEmptyRect } from '@/kernel/geom2d/maxEmptyRect';
+import { useAppStore } from '@/state/project';
+import { TRAY_HELP, TrayFloorCallout, TrayMagnetCallout } from '@/ui/tray/TrayBits';
 import { useBases, type BaseBox } from './useBases';
 import type { Rect } from './snap';
 import './cutter.css';
@@ -26,9 +31,14 @@ export function AddBar() {
   const [frameShape, setFrameShape] = useState<Shape>({ kind: 'rect', w: 125, d: 50 });
   const [note, setNote] = useState<string | null>(null);
   const [frameRowOpen, setFrameRowOpen] = useState(false);
+  const [baseSpacing, setBaseSpacing] = useState(0);
+  // the tray of the frame in hand, once it has been made, so its measurements can be reported
+  const trayPiece = useAppStore((s) => Object.values(s.project.pieces).find((p) => p.role === 'tray'));
+  const trayInfo = useAppStore((s) => (trayPiece ? s.geometry[trayPiece.id]?.data?.tray : undefined));
 
   if (!B.root || !B.selected || !B.selectedBox) return null;
   const mode = B.workMode;
+  const tray = B.trayDefaults;
   const rootBox = B.boxes.find((b) => b.depth === 0)!;
   const selBox = B.selectedBox;
   // the frame that bases go into (multibase): the selected frame, or the frame of the selected base
@@ -41,7 +51,9 @@ export function AddBar() {
 
   const setBase = (k: string) => { setBaseKey(k); const p = byKey(k); if (p) setBaseShape({ kind: p.shape.kind, w: p.w, d: p.d }); };
   const setFrame = (k: string) => { setFrameKey(k); const p = byKey(k); if (p) setFrameShape({ kind: p.shape.kind, w: p.w, d: p.d }); };
-  const profileFor = (k: string) => (byKey(k) && profileForSystem(byKey(k)!.system)) ?? B.defaultProfile;
+  // Bases for a tray get straight sides so they sit snugly in their slots; a size picked
+  // from a game's list still wins, and the project's own default is left alone.
+  const profileFor = (k: string) => (byKey(k) && profileForSystem(byKey(k)!.system)) ?? (mode === 'tray' ? PROFILE_FLAT : B.defaultProfile);
 
   /** place `shape` inside `target`'s usable area; auto-turn to fit */
   const place = (target: BaseBox, shape: Shape, opts: { role: 'base' | 'frame'; name?: string; key: string; fillGrid?: boolean }) => {
@@ -54,18 +66,20 @@ export function AddBar() {
     if (!fits(s)) { setNote(`${num(shape.w)} × ${num(shape.d)} mm does not fit in the ${num(area.w)} × ${num(area.d)} mm area.`); return; }
     const turned = s !== shape;
     if (opts.fillGrid) {
-      const cols = Math.floor((area.w + 1e-6) / s.w), rows = Math.floor((area.d + 1e-6) / s.d);
+      // n bases with (n - 1) gaps between them have to fit the area
+      const gap = mode === 'tray' ? Math.max(0, baseSpacing) : 0;
+      const cols = Math.max(1, Math.floor((area.w + gap + 1e-6) / (s.w + gap))), rows = Math.max(1, Math.floor((area.d + gap + 1e-6) / (s.d + gap)));
       const drafts = [];
       for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-        const x = c * s.w, y = r * s.d;
+        const x = c * (s.w + gap), y = r * (s.d + gap);
         const rect: Rect = { x, y, w: s.w, h: s.d };
         if (children.some((o) => overlaps(o, rect))) continue;
         drafts.push({ shape: s, xy: [r2(x + s.w / 2 - area.w / 2), r2(y + s.d / 2 - area.d / 2)] as [number, number], rotDeg: 0, profile: profileFor(opts.key), role: opts.role });
       }
       if (!drafts.length) { setNote('No room left for bases of that size.'); return; }
       const ids = B.addPieces(target.id, drafts);
-      const leftW = area.w - cols * s.w, leftD = area.d - rows * s.d;
-      setNote(`Added ${ids.length} × ${num(s.w)} × ${num(s.d)} mm${turned ? ' (turned to fit)' : ''}.` + (leftW > 0.5 || leftD > 0.5 ? ` ${num(Math.max(leftW, leftD))} mm strip left — “Use leftover” keeps it as a base.` : ''));
+      const leftW = area.w - (cols * s.w + (cols - 1) * gap), leftD = area.d - (rows * s.d + (rows - 1) * gap);
+      setNote(`Added ${ids.length} × ${num(s.w)} × ${num(s.d)} mm${turned ? ' (turned to fit)' : ''}${gap > 0 ? ` with ${num(gap)} mm between them` : ''}.` + (leftW > 0.5 || leftD > 0.5 ? ` ${num(Math.max(leftW, leftD))} mm strip left — “Use leftover” keeps it as a base.` : ''));
       return;
     }
     const free = largestEmptyRect({ w: area.w, h: area.d }, children, 0.5);
@@ -113,10 +127,11 @@ export function AddBar() {
       })}
     </select>
   );
-  const MODES: { id: 'multibase' | 'diorama' | 'single'; label: string; blurb: string }[] = [
+  const MODES: { id: 'multibase' | 'diorama' | 'single' | 'tray'; label: string; blurb: string }[] = [
     { id: 'multibase', label: 'Multibase', blurb: 'Place a unit frame (Kings of War, The Old World…) and cut the bases you want inside it.' },
     { id: 'diorama', label: 'Diorama', blurb: 'Cut the bases you need and keep every scrap of leftover material as extra bases.' },
     { id: 'single', label: 'Single base', blurb: 'Cut one base out of the scene. Nothing else.' },
+    { id: 'tray', label: 'Movement tray', blurb: 'Place a unit frame and fill it with bases, and get a tray they slot into as well.' },
   ];
   const modeSeg = (
     <span className="mode-seg" role="radiogroup" aria-label="What are you making?" title={MODES.find((m) => m.id === mode)?.blurb}>
@@ -158,7 +173,7 @@ export function AddBar() {
             {deleteBtn}
           </div>
         )}
-        {mode === 'multibase' && (
+        {usesFrames(mode) && (
           <>
             {frames.length > 0 && !frameRowOpen ? (
               <div className="row">
@@ -182,15 +197,35 @@ export function AddBar() {
               {sizeInputs(baseShape, setBaseShape, 'Width, left to right (mm)')}
               <button type="button" className="primary" disabled={!frameBox} onClick={() => frameBox && place(frameBox, baseShape, { role: 'base', key: baseKey })} title={frameBox ? 'Add one base in the largest free spot of the frame' : 'Place a frame first'}>+ Add one</button>
               <button type="button" disabled={!frameBox} onClick={() => frameBox && place(frameBox, baseShape, { role: 'base', key: baseKey, fillGrid: true })} title={frameBox ? 'Fill the frame with as many of these as fit' : 'Place a frame first'}>Fill frame</button>
+              {mode === 'tray' && (
+                <label title={TRAY_HELP.spacing}>Space between bases <input type="number" step={0.5} min={0} max={10} value={num(baseSpacing)} onChange={(e) => setBaseSpacing(clampNum(e.target.value, 0, 10))} /> mm</label>
+              )}
               <button type="button" disabled={!frameBox} onClick={() => frameBox && useLeftover(frameBox)} title="Turn the largest empty part of the frame into a base (e.g. the back strip)">Use leftover</button>
               {deleteBtn}
             </div>
+            {mode === 'tray' && (
+              <div className="row">
+                <span className="lbl"><strong>3 · The tray</strong></span>
+                <label title={TRAY_HELP.floor}>Floor <input type="number" step={0.1} min={TRAY_FLOOR_MIN} max={TRAY_FLOOR_MAX} value={num(tray.floor)} onChange={(e) => B.setTraySettings({ floor: clampNum(e.target.value, TRAY_FLOOR_MIN, TRAY_FLOOR_MAX) })} /> mm</label>
+                <label title={TRAY_HELP.gap}>Room around each base <input type="number" step={0.05} min={0} max={1} value={num(tray.gap)} onChange={(e) => B.setTraySettings({ gap: clampNum(e.target.value, 0, 1) })} /> mm</label>
+                <label title={TRAY_HELP.edge}>Rim <input type="number" step={0.5} min={0} max={20} value={num(tray.edge)} onChange={(e) => B.setTraySettings({ edge: clampNum(e.target.value, 0, 20) })} /> mm</label>
+                <label title={TRAY_HELP.magnets}><input type="checkbox" checked={tray.magnets} onChange={(e) => B.setTraySettings({ magnets: e.target.checked })} /> Magnets in the floor</label>
+              </div>
+            )}
+            {mode === 'tray' && (trayInfo?.magnetMode === 'through' || trayInfo) && (
+              <div className="row tray-callouts">
+                <TrayMagnetCallout tray={trayInfo} onSetFloor={(v) => B.setTraySettings({ floor: v })} />
+                <TrayFloorCallout tray={trayInfo} floor={tray.floor} onSetFloor={(v) => B.setTraySettings({ floor: v })} />
+              </div>
+            )}
           </>
         )}
         {(note || B.showHelp) && (
           <div className="row">
             <span className={note ? 'warn' : 'hint'}>
-              {note ?? (mode === 'multibase'
+              {note ?? (mode === 'tray'
+                ? (frameBox ? TRAY_HELP.intro : 'Pick a unit frame and press “Place frame”, then fill it with bases. When you press Base-ify you get the bases and a tray they drop into.')
+                : mode === 'multibase'
                 ? (frameBox
                   ? 'Add the removable row first if you want one (e.g. a 25 × 125 strip), then “Fill frame” with the small bases. Drag things to move them; corners resize. Press Base-ify when the layout looks right.'
                   : 'Pick a unit frame and press “Place frame”, then fill it with bases. A frame with nothing inside is printed as one solid multibase.')

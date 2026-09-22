@@ -5,8 +5,10 @@
  */
 import { ancestors } from '@/model/tree';
 import { PROFILE_GW } from '@/kernel/types';
-import type { Piece, Project } from '@/model/types';
-import type { MagnetRequest, PieceChainNode, PieceGeometryTransfer, SizingRequest, SourceSummary, PresupportRequest, UndersideRequest, SocketRequest } from '@/worker/api';
+import type { EdgeProfile, Vec2 } from '@/kernel/types';
+import { defaultTraySettings } from '@/model/defaults';
+import type { Piece, Project, TraySettings } from '@/model/types';
+import type { MagnetRequest, PieceChainNode, PieceGeometryTransfer, SizingRequest, SourceSummary, PresupportRequest, UndersideRequest, SocketRequest, TrayRequest } from '@/worker/api';
 
 /** Ancestor chain of `pieceId`, root first, ending with the piece itself. */
 export function chainFor(project: Project, pieceId: string): PieceChainNode[] {
@@ -26,7 +28,61 @@ export function chainFor(project: Project, pieceId: string): PieceChainNode[] {
     plugDepth: p.plugDepth ?? plug.depth,
     plugClearance: p.plugClearance ?? plug.clearance,
     sockets: socketsFor(project, p),
+    tray: trayRequestFor(project, p),
   }));
+}
+
+/** The project's tray settings with this frame's own overrides on top. */
+export function traySettingsFor(project: Project, frame: Piece | undefined): TraySettings {
+  return { ...defaultTraySettings(), ...(project.tray ?? {}), ...(frame?.tray ?? {}) };
+}
+
+/** How tall a base's plate is, which is how far the tray's surround must stand above its floor. */
+function plateHeightOf(project: Project, piece: Piece): number {
+  const p: EdgeProfile = piece.profile ?? project.defaultProfile ?? PROFILE_GW;
+  if (p.kind === 'inset') return p.height;
+  // 'original' keeps the loaded file's own plate
+  return project.sources[piece.sourceId]?.normalization.plateTop ?? 3;
+}
+
+/**
+ * Everything the worker needs to build a movement tray: one slot per base in the
+ * frame it belongs to, positioned in the scene's frame, plus a magnet hole under
+ * each base lined up with the base's own magnet.
+ */
+export function trayRequestFor(project: Project, piece: Piece): TrayRequest | undefined {
+  if (piece.role !== 'tray' || !piece.trayOf) return undefined;
+  const frame = project.pieces[piece.trayOf];
+  if (!frame) return undefined;
+  const t = traySettingsFor(project, frame);
+  const u = project.underside;
+  const m = project.magnet;
+  const slots: TrayRequest['slots'] = [];
+  const at: Vec2[] = [];
+  const heights = new Set<number>();
+  for (const cid of frame.children) {
+    const c = project.pieces[cid];
+    if (!c || (c.role ?? 'base') !== 'base') continue;
+    const xy: Vec2 = [frame.xy[0] + c.xy[0], frame.xy[1] + c.xy[1]];
+    slots.push({ shape: c.shape, xy, rotDeg: c.rotDeg });
+    heights.add(Math.round(plateHeightOf(project, c) * 1000));
+    if (!t.magnets) continue;
+    // line the tray's holes up with the base's own magnets; a base with none yet gets one in the middle
+    if (c.magnets.slots.length > 0) for (const s of c.magnets.slots) at.push([xy[0] + s.xy[0], xy[1] + s.xy[1]]);
+    else at.push(xy);
+  }
+  const first = frame.children.map((cid) => project.pieces[cid]).find((c) => c && (c.role ?? 'base') === 'base');
+  return {
+    floor: t.floor,
+    gap: t.gap,
+    plateHeight: first ? plateHeightOf(project, first) : 3,
+    slots,
+    magnets: at.length ? { at, sizing: { dia: m.dia, thick: m.thick, radialTol: m.radialTol, depthTol: m.depthTol, sides: m.sides }, floorMin: m.floorMin } : undefined,
+    mixedHeights: heights.size > 1,
+    watermark: u?.watermark ?? '',
+    watermarkHeight: u?.watermarkHeight ?? 0.3,
+    underside: u?.hollow ? { depth: u.voidDepth, rim: u.rimWidth, ringWidth: u.ringWidth } : undefined,
+  };
 }
 
 /** Plug bases (siblings) whose footprint lies inside a leftover piece: the leftover keeps their sockets. */

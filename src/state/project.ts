@@ -10,7 +10,8 @@ import * as Comlink from 'comlink';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
-import { defaultEdges, newId, newProject, defaultExportSettings, defaultUndersideSettings, defaultPlugSettings } from '@/model/defaults';
+import { defaultEdges, newId, newProject, defaultExportSettings, defaultUndersideSettings, defaultPlugSettings, defaultTraySettings } from '@/model/defaults';
+import { placementError } from '@/model/rules';
 import { descendants, leaves, pieceSize } from '@/model/tree';
 import type { MagnetSlot, Piece, Project, Source, SourceNormalization, SourceStats, PieceRole } from '@/model/types';
 import { downloadBlob } from '@/ui/util/download';
@@ -25,6 +26,7 @@ import { USABLE_INSET } from '@/kernel/pipeline/computePiece';
 const COMPUTE_TIMEOUT_MS = 120_000;
 const LOAD_TIMEOUT_MS = 300_000;
 import { chainFor, magnetRequestFor, sizingRequestFor, presupportRequestFor, undersideRequestFor } from './chain';
+import { trayPiecesFor, trayShapeFor } from './derive';
 import type { AppStore, SourceState } from './types';
 
 function errorMessage(err: unknown): string {
@@ -347,18 +349,11 @@ export const useAppStore = create<AppStore>()(
         const parent = state.project.pieces[parentId];
         if (!parent) throw new Error(`Unknown parent piece: ${parentId}`);
         const role: PieceRole = draft.role ?? 'base';
-        const mode = state.project.mode;
         const parentIsRoot = parent.parentId === null;
-        const parentRole = parent.role ?? 'base';
-        const fail = (msg: string) => { set((s) => { s.lastError = msg; }); return null; };
-        if (!parentIsRoot && parentRole !== 'frame') return fail('Bases cannot be cut from another base. Select the big base or a frame first.');
-        if (role === 'frame' && !parentIsRoot) return fail('A frame can only be placed on the big base.');
-        if (mode === 'single') {
-          if (role !== 'base' || !parentIsRoot) return fail('Single base mode: place one base on the scene.');
-          if (parent.children.length > 0) return fail(`Single base mode holds one base and ${parent.children.length} ${parent.children.length === 1 ? 'is' : 'are'} already placed. Delete ${parent.children.length === 1 ? 'it' : 'them'} first, or switch to Diorama mode to keep several.`);
-        }
-        if (mode === 'diorama' && (role === 'frame' || !parentIsRoot)) return fail('Diorama mode: place bases straight on the big base; frames are for Multibase mode.');
-        if (mode === 'multibase' && role === 'base' && parentIsRoot) return fail('Multibase mode: place a unit frame first, then put bases inside it.');
+        // a tray is not a sibling of the bases it holds: it must not count against "one base only"
+        const siblingCount = parent.children.filter((cid) => state.project.pieces[cid]?.role !== 'tray').length;
+        const problem = placementError(state.project.mode, role, { parentIsRoot, parentRole: parent.role ?? 'base', siblingCount });
+        if (problem) { set((s) => { s.lastError = problem; }); return null; }
         const id = newId('pc');
         const base: Piece = {
           id,
@@ -414,6 +409,19 @@ export const useAppStore = create<AppStore>()(
         for (const src of sources) {
           const root = get().project.pieces[src.rootPieceId];
           if (!root) continue;
+          if (get().project.mode === 'tray') {
+            // one movement tray per frame, regenerated from scratch so it always matches the layout
+            for (const cid of root.children.slice()) {
+              if (get().project.pieces[cid]?.role === 'tray') get().removePiece(cid);
+            }
+            const trays = trayPiecesFor(get().project, src.rootPieceId);
+            set((s) => {
+              for (const tray of trays) {
+                s.project.pieces[tray.id] = tray;
+                s.project.pieces[src.rootPieceId]?.children.push(tray.id);
+              }
+            });
+          }
           if (get().project.mode === 'diorama') {
             // regenerate the leftover material as bases
             for (const cid of root.children.slice()) {
@@ -498,16 +506,26 @@ export const useAppStore = create<AppStore>()(
           const piece = s.project.pieces[id];
           if (!piece) return;
           const removedIds = [id, ...descendants(s.project, id)];
+          // a frame's tray is not inside it (it hangs off the scene), so the cascade misses it
+          const gone = new Set(removedIds);
+          for (const [pid, p] of Object.entries(s.project.pieces)) {
+            if (p.role === 'tray' && p.trayOf && gone.has(p.trayOf) && !gone.has(pid)) { removedIds.push(pid); gone.add(pid); }
+          }
           const wasSelected = s.project.selectedId === id;
           const parentId = piece.parentId;
+          const parents = new Map<string, string>();
+          for (const rid of removedIds) {
+            const p = s.project.pieces[rid]?.parentId;
+            if (p) parents.set(rid, p);
+          }
           for (const rid of removedIds) {
             delete s.project.pieces[rid];
             delete s.geometry[rid];
             delete s.terrain[rid];
           }
-          if (parentId !== null) {
-            const parent = s.project.pieces[parentId];
-            if (parent) parent.children = parent.children.filter((c) => c !== id);
+          for (const [rid, pid] of parents) {
+            const parent = s.project.pieces[pid];
+            if (parent) parent.children = parent.children.filter((c) => c !== rid);
           }
           // Whatever was selected inside the removed subtree, land on the parent so the
           // dock and the outlines never vanish (a null selection hides the whole work area).
@@ -519,13 +537,44 @@ export const useAppStore = create<AppStore>()(
       },
 
       setPieceMagnets(id, magnets) {
-        const live = get().baseified;
         set((s) => {
           const piece = s.project.pieces[id];
           if (!piece) return;
           piece.magnets = magnets;
         });
-        void get().recomputeSubtree(id);
+        void get().recomputeSubtree(id).then(() => {
+          // the tray's holes are lined up with the base's magnets, so it has to follow
+          const state = get();
+          const parentId = state.project.pieces[id]?.parentId;
+          for (const p of Object.values(state.project.pieces)) {
+            if (p.role === 'tray' && p.trayOf && (p.trayOf === parentId || p.trayOf === id)) void get().recomputeSubtree(p.id);
+          }
+        });
+      },
+
+      setTraySettings(patch, frameId) {
+        set((s) => {
+          if (frameId) {
+            const frame = s.project.pieces[frameId];
+            if (frame) frame.tray = { ...(frame.tray ?? {}), ...patch };
+          } else {
+            Object.assign(s.project.tray, patch);
+          }
+        });
+        // keep any tray already made in step with the setting instead of making the user re-forge
+        const trays = Object.values(get().project.pieces).filter((p) => p.role === 'tray' && (!frameId || p.trayOf === frameId));
+        if (trays.length === 0) {
+          set((s) => { s.baseified = false; s.previewIds = []; });
+          return;
+        }
+        set((s) => {
+          for (const tray of trays) {
+            const frame = tray.trayOf ? s.project.pieces[tray.trayOf] : undefined;
+            const piece = s.project.pieces[tray.id];
+            if (frame && piece) piece.shape = trayShapeFor(s.project, frame);
+          }
+        });
+        for (const tray of trays) void get().recomputeSubtree(tray.id);
       },
 
       // -------------------------------------------------------------- settings
@@ -556,7 +605,7 @@ export const useAppStore = create<AppStore>()(
       async fetchTerrainInfo(id) {
         const state = get();
         const piece = state.project.pieces[id];
-        if (!piece || piece.parentId === null || piece.role === 'frame') return;
+        if (!piece || piece.parentId === null || piece.role === 'frame' || piece.role === 'tray') return;
         try {
           const info = await kernel().columnInfo({ sourceId: piece.sourceId, chain: chainFor(state.project, id) });
           set((s) => { if (info) s.terrain[id] = info; else delete s.terrain[id]; });
@@ -601,6 +650,10 @@ export const useAppStore = create<AppStore>()(
         const piece = state.project.pieces[id];
         if (!piece) return;
         const ids = [id, ...descendants(state.project, id)];
+        // A tray's magnet holes are lined up with the bases' own magnets, which are placed
+        // while each base is computed, so every tray has to be computed after the bases.
+        // Array#sort is stable, so everything else keeps its order.
+        ids.sort((a, b) => (state.project.pieces[a]?.role === 'tray' ? 1 : 0) - (state.project.pieces[b]?.role === 'tray' ? 1 : 0));
         for (const pid of ids) {
           await runSerialized(pid);
         }
@@ -722,7 +775,7 @@ export const useAppStore = create<AppStore>()(
         }
         const prevSources = get().sources;
         set((s) => {
-          s.project = { ...project, export: { ...defaultExportSettings(), ...project.export, presupport: { ...defaultExportSettings().presupport, ...(project.export?.presupport ?? {}) } }, underside: { ...defaultUndersideSettings(), ...(project.underside ?? {}) }, plug: { ...defaultPlugSettings(), ...(project.plug ?? {}) }, studio: normalizeStudioLibrary(project.studio) };
+          s.project = { ...project, export: { ...defaultExportSettings(), ...project.export, presupport: { ...defaultExportSettings().presupport, ...(project.export?.presupport ?? {}) } }, underside: { ...defaultUndersideSettings(), ...(project.underside ?? {}) }, plug: { ...defaultPlugSettings(), ...(project.plug ?? {}) }, tray: { ...defaultTraySettings(), ...(project.tray ?? {}) }, studio: normalizeStudioLibrary(project.studio) };
           s.geometry = {};
           s.view = { mode: 'top', showSculpt: true, tool: 'layout', drafts: [], activeDraftId: null, showHelp: s.view.showHelp, confirmDelete: null, confirmRemoveSource: null, leftTab: 'bases' };
           if (!s.project.mode) s.project.mode = 'multibase';

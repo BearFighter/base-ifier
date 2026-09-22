@@ -17,17 +17,18 @@ import type { Soup, Vec2 } from '@/kernel/types';
 import { tightSoup } from '@/kernel/types';
 import { readStl } from '@/kernel/stl/read';
 import { prepareSource, type PreparedSource } from '@/kernel/source/prepareSource';
-import { computePiece, meshToSoup, rootPieceParams, sourceFrame, type ParentFrame, type PieceResult } from '@/kernel/pipeline/computePiece';
+import { computePiece, meshToSoup, rootPieceParams, sourceFrame, type ParentFrame, type PieceResult, type TrayParams } from '@/kernel/pipeline/computePiece';
 import { magnetSlotSpecs } from '@/kernel/body/magnetSlots';
 import { materialThickness, socketFor } from '@/kernel/pipeline/plug';
 import type { SocketSpec } from '@/kernel/pipeline/plug';
 import { shapePolygon } from '@/kernel/geom2d/shapes';
+import { trayPocket, TRAY_MIN_WALL } from '@/kernel/tray/cells';
 import { MIN_CEILING } from '@/kernel/body/hollow';
 import { autoMagnetPositions } from '@/kernel/pipeline/autoMagnets';
 import { pieceToStl, plateToStl } from '@/kernel/pipeline/exportPiece';
 import { decimateForDisplay, decimateSoup } from '@/kernel/mesh/decimate';
 import { boundsOfSoup } from '@/kernel/mesh/bbox';
-import type { ColumnInfo, ComputeRequest, ExportItem, KernelApi, MeshTransfer, PieceChainNode, PieceGeometryTransfer, SocketRequest, SourceSummary } from './api';
+import type { ColumnInfo, ComputeRequest, ExportItem, KernelApi, MeshTransfer, PieceChainNode, PieceGeometryTransfer, SocketRequest, SourceSummary, TrayRequest } from './api';
 
 interface SourceEntry {
   prepared: PreparedSource;
@@ -44,8 +45,14 @@ const FULL_CACHE_SIZE = 6;
 
 const sources = new Map<string, SourceEntry>();
 
+/**
+ * Cache key of a chain. `n.tray` MUST be in here: moving one base inside a frame
+ * changes nothing about the frame's or the scene's node, but it does change the
+ * tray's slots, and without it the LRU would hand back a stale tray that looks
+ * exactly like a geometry bug.
+ */
 function chainKey(chain: PieceChainNode[], upto: number): string {
-  return JSON.stringify(chain.slice(0, upto + 1).map((n) => [n.shape, n.xy, n.rotDeg, n.edges, n.profile ?? null, n.role ?? 'base', n.cut ?? 'full', n.plugDepth ?? null, n.plugClearance ?? null, n.sockets ?? null]));
+  return JSON.stringify(chain.slice(0, upto + 1).map((n) => [n.shape, n.xy, n.rotDeg, n.edges, n.profile ?? null, n.role ?? 'base', n.cut ?? 'full', n.plugDepth ?? null, n.plugClearance ?? null, n.sockets ?? null, n.tray ?? null]));
 }
 
 function sizingKey(req: ComputeRequest): string {
@@ -71,11 +78,32 @@ function resolveParentFrame(entry: SourceEntry, chain: PieceChainNode[]): Parent
   return frame;
 }
 
-/** Piece params for a chain node, with plug sockets resolved to source-frame pockets. */
+/** Piece params for a chain node, with plug sockets and tray slots resolved to source-frame polygons. */
 function paramsFor(src: PreparedSource, frame: ParentFrame, node: PieceChainNode, hollow?: ComputeRequest['underside']) {
   const sockets: SocketSpec[] = [];
   for (const sk of node.sockets ?? []) sockets.push(resolveSocket(src, frame, sk, hollow));
-  return { shape: node.shape, xy: node.xy, rotDeg: node.rotDeg, edges: node.edges, profile: node.profile, role: node.role, cut: node.cut, plugDepth: node.plugDepth, plugClearance: node.plugClearance, sockets };
+  return { shape: node.shape, xy: node.xy, rotDeg: node.rotDeg, edges: node.edges, profile: node.profile, role: node.role, cut: node.cut, plugDepth: node.plugDepth, plugClearance: node.plugClearance, sockets, tray: node.tray ? resolveTray(frame, node.tray) : undefined };
+}
+
+/** A TrayRequest as the kernel wants it: slot openings and magnet holes in the source frame. */
+function resolveTray(frame: ParentFrame, req: TrayRequest): TrayParams {
+  const pockets = req.slots.map((s) => trayPocket(s.shape, frame.origin[0] + s.xy[0], frame.origin[1] + s.xy[1], s.rotDeg, req.gap));
+  const magnets = req.magnets
+    ? magnetSlotSpecs(req.magnets.sizing, req.magnets.at.map(([x, y]) => ({ x: frame.origin[0] + x, y: frame.origin[1] + y })))
+    : undefined;
+  return {
+    floor: req.floor,
+    plateHeight: req.plateHeight,
+    pockets,
+    magnets,
+    magnetFloorMin: req.magnets?.floorMin,
+    gap: req.gap,
+    minWall: TRAY_MIN_WALL,
+    watermark: req.watermark,
+    watermarkHeight: req.watermarkHeight,
+    underside: req.underside,
+    mixedHeights: req.mixedHeights,
+  };
 }
 
 function resolveSocket(src: PreparedSource, frame: ParentFrame, sk: SocketRequest, hollow?: ComputeRequest['underside']): SocketSpec {
@@ -231,7 +259,8 @@ const api: KernelApi = {
     const hf = buildGround(doc, previewCell(doc));
     const tGround = performance.now() - t0;
     // the same cut as the finished scene, or a round board would show as a square (groundClip)
-    const slab = heightfieldToSlab(hf, { zBase: doc.board.plateTop - 0.1, clipTo: groundClip(doc) });
+    const clip = groundClip(doc);
+    const slab = heightfieldToSlab(hf, { zBase: doc.board.plateTop - 0.1, clipTo: clip });
     const warnings: string[] = [...heightCapWarnings(doc)];
     const missing = new Set<string>();
     const propSoups = [];
@@ -248,7 +277,7 @@ const api: KernelApi = {
         }
         continue;
       }
-      const placed = placeProp(prop, p, hf, doc.rules.sink, doc.board.plateTop);
+      const placed = placeProp(prop, p, hf, doc.rules.sink, doc.board.plateTop, clip);
       propSoups.push(placed.soup);
       propRanges.push({ id: p.id, start: tri, count: placed.soup.triCount });
       placements.push({ id: p.id, x: placed.x, y: placed.y, z: placed.z, rotDeg: p.rotDeg, scale: p.scale });
@@ -323,6 +352,9 @@ const api: KernelApi = {
       sculpt,
       hasSculpt: !req.skipSculpt,
       carved: r.carved,
+      tray: r.tray
+        ? { floor: r.tray.floor, plateHeight: r.tray.plateHeight, magnetMode: r.tray.magnetMode, magnetFloorWanted: r.tray.magnetFloorWanted, thinSpan: r.tray.thinSpan, cells: r.tray.cells, watermark: r.tray.watermark }
+        : undefined,
       warnings: r.warnings,
       bodyVolume: r.bodyVolume,
       bounds: r.bounds,
@@ -379,11 +411,27 @@ function exportable(item: ExportItem): ExportablePiece {
   const ps = item.presupport;
   if (!ps) return { name: item.name, body, sculpt };
   const scale = item.sizing?.scale ?? 1;
-  const slots = item.magnets ? magnetSlotSpecs(item.magnets.sizing, item.magnets.slots).map((sl) => ({ ...sl, x: sl.x * scale, y: sl.y * scale })) : [];
   const last = item.chain[item.chain.length - 1];
+  const maxDim = Math.max(r.size.w, r.size.d);
+  if (r.tray) {
+    // A tray is a broad flat panel, not a base. Small ones print flat on their supports;
+    // bigger ones get a shallow tilt so the peel is progressive without a long thin
+    // cantilever (docs/research/resin-printing-bases.md Q1 warns against both extremes —
+    // 25 deg is a judgement call to confirm with a test print). The middle spacing is
+    // clamped so an unstiffened 1 mm floor is actually carried, and the magnet holes
+    // keep the support tips out.
+    const tiltDeg = ps.tiltDeg ?? (maxDim <= 80 ? 0 : 25);
+    const d = densitySpacing(maxDim, ps.density);
+    const res = presupport(
+      { body, sculpt, bottom: r.outline.bottom, slots: r.tray.magnets },
+      { tiltDeg, standoff: ps.standoff, tipDiameter: ps.tipDiameter, spacing: Math.min(d.spacing, 6), edgeSpacing: d.edgeSpacing, bracing: ps.bracing },
+    );
+    return { name: item.name, body: res.body, sculpt: res.sculpt, supports: res.supports };
+  }
+  const slots = item.magnets ? magnetSlotSpecs(item.magnets.sizing, item.magnets.slots).map((sl) => ({ ...sl, x: sl.x * scale, y: sl.y * scale })) : [];
   const shape = { kind: last.shape.kind, w: r.size.w, d: r.size.d };
   const tiltDeg = ps.tiltDeg ?? autoTiltDeg(shape, last.profile);
-  const { edgeSpacing, spacing } = densitySpacing(Math.max(r.size.w, r.size.d), ps.density);
+  const { edgeSpacing, spacing } = densitySpacing(maxDim, ps.density);
   const res = presupport({ body, sculpt, bottom: r.outline.bottom, slots, underside: r.underside }, { tiltDeg, standoff: ps.standoff, tipDiameter: ps.tipDiameter, spacing, edgeSpacing, bracing: ps.bracing });
   return { name: item.name, body: res.body, sculpt: res.sculpt, supports: res.supports };
 }

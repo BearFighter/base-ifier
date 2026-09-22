@@ -272,6 +272,43 @@ export interface PlacedProp {
 }
 
 /**
+ * "Is this point over real ground?" for one board, made once per scene.
+ *
+ * A round or oval board's ground is CUT to its outline (`groundClip`), but the
+ * heightfield behind it is still the whole rectangle, and outside the outline it
+ * reads back as the plate top. Measuring a prop against that put the corner that
+ * hangs over a round rim on ground that is not there and left the rest of the
+ * prop floating a few tenths above the real ground. Points outside the outline
+ * are over thin air and are left out of the measurement instead.
+ *
+ * Most points are nowhere near the edge, so the outline is only consulted for
+ * points in the ring between the outline's inscribed and outer radius; a prop of
+ * a few hundred thousand triangles would be far too slow otherwise.
+ */
+function overGround(hf: Heightfield, clip?: Polygon2): (x: number, y: number) => boolean {
+  const hw = hf.w / 2 + 1e-9, hd = hf.d / 2 + 1e-9;
+  const inBox = (x: number, y: number) => x >= -hw && x <= hw && y >= -hd && y <= hd;
+  if (!clip || clip.length < 3) return inBox;
+  const c = polygonCentroid(clip);
+  let rIn = Infinity, rOut = 0;
+  for (let i = 0; i < clip.length; i++) {
+    const a = clip[i], b = clip[(i + 1) % clip.length];
+    const ex = b[0] - a[0], ey = b[1] - a[1];
+    const len = Math.hypot(ex, ey) || 1;
+    rIn = Math.min(rIn, Math.abs((c[0] - a[0]) * ey - (c[1] - a[1]) * ex) / len);
+    rOut = Math.max(rOut, Math.hypot(a[0] - c[0], a[1] - c[1]));
+  }
+  const rIn2 = rIn * rIn, rOut2 = rOut * rOut;
+  return (x, y) => {
+    const dx = x - c[0], dy = y - c[1];
+    const d2 = dx * dx + dy * dy;
+    if (d2 <= rIn2) return inBox(x, y);
+    if (d2 > rOut2) return false;
+    return inBox(x, y) && pointInConvexPolygon(clip, x, y, 1e-9);
+  };
+}
+
+/**
  * Put a prop on the ground: scale it, turn it, lean it with the slope, then
  * DROP it until it touches.
  *
@@ -280,11 +317,12 @@ export interface PlacedProp {
  * hanging in the air on one side. Here every point of the prop is measured
  * against the ground under it and the whole prop is lowered until its closest
  * point is `sink` mm inside the ground — so something always touches, and
- * nothing floats. Off the board the ground counts as the plate top (lower than
- * any ground), so a prop hanging over the edge still rests on the part that is
- * over the board instead of being pushed up by thin air.
+ * nothing floats. A point that is NOT over the board (past a round board's own
+ * outline, `clip`) is over thin air and is left out, so a prop hanging over the
+ * edge still rests on the part that is over the board.
  */
-export function placeProp(prop: Prop, p: StudioProp, hf: Heightfield, sinkDefault: number, plateTop: number): PlacedProp {
+export function placeProp(prop: Prop, p: StudioProp, hf: Heightfield, sinkDefault: number, plateTop: number, clip?: Polygon2): PlacedProp {
+  const onBoard = overGround(hf, clip);
   const n = sampleNormal(hf, p.x, p.y);
   const sink = Math.min(sinkDefault + p.sink, prop.height * p.scale * 0.4);
   const yaw = (p.rotDeg * Math.PI) / 180;
@@ -295,7 +333,6 @@ export function placeProp(prop: Prop, p: StudioProp, hf: Heightfield, sinkDefaul
   const al = Math.hypot(ax, ay) || 1;
   const kx = ax / al, ky = ay / al;
   const ct = Math.cos(tilt), st = Math.sin(tilt);
-  const hw = hf.w / 2 + 1e-9, hd = hf.d / 2 + 1e-9;
   const src = prop.soup.positions;
   const n9 = prop.soup.triCount * 9;
   const out = new Float32Array(n9);
@@ -317,9 +354,10 @@ export function placeProp(prop: Prop, p: StudioProp, hf: Heightfield, sinkDefaul
     out[i] = tx;
     out[i + 1] = ty;
     out[i + 2] = tz;
-    const ground = tx >= -hw && tx <= hw && ty >= -hd && ty <= hd ? sampleHeight(hf, tx, ty) : plateTop;
-    const gap = tz - ground;
-    if (gap < minGap) minGap = gap;
+    if (onBoard(tx, ty)) {
+      const gap = tz - sampleHeight(hf, tx, ty);
+      if (gap < minGap) minGap = gap;
+    }
     if (tz < minZ) minZ = tz;
   }
   if (!Number.isFinite(minGap)) return { soup: { positions: out, triCount: prop.soup.triCount }, x: p.x, y: p.y, z: plateTop };
@@ -351,7 +389,8 @@ export function bakeStudio(doc: StudioDocument, source: PropSource, name = doc.n
   const hf = buildGround(doc);
   timings.ground = now() - t0;
   let t1 = now();
-  const slab = heightfieldToSlab(hf, { zBase: plate - 0.1, clipTo: groundClip(doc) });
+  const clip = groundClip(doc);
+  const slab = heightfieldToSlab(hf, { zBase: plate - 0.1, clipTo: clip });
   timings.slab = now() - t1;
   t1 = now();
   const shells: Soup[] = [slab];
@@ -363,7 +402,7 @@ export function bakeStudio(doc: StudioDocument, source: PropSource, name = doc.n
       warnings.push(item ? `${item.name}: the STL is not loaded, so it was left out (add ${item.fileName} again)` : `a prop that is no longer in the library was left out`);
       continue;
     }
-    shells.push(placeProp(prop, p, hf, doc.rules.sink, plate).soup);
+    shells.push(placeProp(prop, p, hf, doc.rules.sink, plate, clip).soup);
     placed++;
   }
   timings.props = now() - t1;

@@ -1,6 +1,6 @@
 import type { Shape, EdgeTreatment, EdgeProfile } from '@/kernel/types';
 import { PROFILE_GW, PROFILE_FLAT, PROFILE_ORIGINAL } from '@/kernel/types';
-import type { ExportSettings, MagnetSettings, PrinterProfile, Project, PresupportSettings, UndersideSettings, PlugSettings } from './types';
+import type { ExportSettings, MagnetSettings, PrinterProfile, Project, PresupportSettings, UndersideSettings, PlugSettings, TraySettings } from './types';
 
 /** Generate a short, human-scanable unique id: `<prefix><base36 random>`. */
 export function newId(prefix: string): string {
@@ -63,6 +63,7 @@ export function newProject(name: string = 'Untitled'): Project {
     export: defaultExportSettings(),
     underside: defaultUndersideSettings(),
     plug: defaultPlugSettings(),
+    tray: defaultTraySettings(),
     studio: {},
     defaultProfile: PROFILE_GW,
     mode: 'multibase',
@@ -73,6 +74,32 @@ export function newProject(name: string = 'Untitled'): Project {
 /** Plug cuts: 4 mm of terrain comes with the base, 0.2 mm per side of play in the socket. */
 export function defaultPlugSettings(): PlugSettings {
   return { depth: 4, clearance: 0.2 };
+}
+
+/**
+ * Movement trays: a 1 mm floor, 0.2 mm of play per side in each slot (a resin
+ * drop-in fit), a 3 mm rim all round, and a magnet under every base. The floor is
+ * deliberately thin by default and the app suggests thickening it once it knows
+ * how much unbroken floor the layout actually leaves (see `suggestedTrayFloor`).
+ */
+export function defaultTraySettings(): TraySettings {
+  return { floor: 1.0, gap: 0.2, edge: 3.0, magnets: true };
+}
+
+/** Floor range offered in the UI, mm. */
+export const TRAY_FLOOR_MIN = 0.6;
+export const TRAY_FLOOR_MAX = 4.0;
+
+/**
+ * House rule for how thick the floor should be, from the largest unbroken span of
+ * bare floor the layout leaves. Thin resin sheets curl as they cure and no source
+ * gives a cutoff in mm (docs/research/flat-underside.md §1), so these bands mirror
+ * the app's existing 40/100 mm size bands and are meant to be confirmed with a
+ * test print. Returns null when the floor already covers it.
+ */
+export function suggestedTrayFloor(spanMm: number, current: number): number | null {
+  const want = spanMm > 110 ? 2.0 : spanMm > 60 ? 1.5 : 1.0;
+  return want > current + 1e-9 ? want : null;
 }
 
 /** Hollow underside: 2 mm void inside a 2 mm brim, magnet rings, raised watermark. */

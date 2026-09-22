@@ -193,6 +193,30 @@ describe('Base Studio scenes', () => {
     expect(gaps(tooDeep.soup, ground).lowest).toBeGreaterThanOrEqual(PLATE - 0.1 + 0.02 - 1e-6);
   });
 
+  it('beds a prop hanging over a ROUND board’s rim on the ground that is really there', () => {
+    // a round board's ground is cut to its outline, but the heightfield behind it is the
+    // whole square and reads back as the plate top outside: measuring against that rested
+    // the overhanging corner on ground that does not exist and floated the rest
+    const SINK = 0.5;
+    const round = newStudioDocument('round', { kind: 'ellipse', w: 60, d: 60 }, 'forest-floor', 1.5);
+    const clip = groundClip(round)!;
+    const hf = groundOf(63, 63, () => PLATE + 1.4);
+    const prop = boxProp(10, 6);
+    const p = handProp('lib-rock', 28.5, 0); // the furthest out the board lets a prop sit
+    expect(pointInConvexPolygon(clip, p.x, p.y, 1e-9)).toBe(true);
+    const onRim = placeProp(prop, p, hf, SINK, PLATE, clip);
+    // measure only where there IS ground, exactly as the finished scene is cut
+    let min = Infinity;
+    for (let i = 0; i < onRim.soup.triCount * 9; i += 3) {
+      const x = onRim.soup.positions[i], y = onRim.soup.positions[i + 1];
+      if (!pointInConvexPolygon(clip, x, y, 1e-9)) continue;
+      min = Math.min(min, onRim.soup.positions[i + 2] - sampleHeight(hf, x, y));
+    }
+    expect(min).toBeCloseTo(-SINK, 3);
+    // a rectangular board has no outline to cut to, so it is unaffected
+    expect(groundClip(newStudioDocument('rect', { kind: 'rect', w: 60, d: 60 }, 'forest-floor'))).toBeUndefined();
+  });
+
   it('keeps a prop the user drags or types out of bounds on the board', () => {
     const round = newStudioDocument('round', { kind: 'ellipse', w: 60, d: 60 }, 'forest-floor', 1.5);
     const clear = propClearance(round);

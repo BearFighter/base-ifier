@@ -93,10 +93,27 @@ export interface Source {
 }
 
 /** What the user is making. Decides what can be placed on the big base and how deep it nests. */
-export type WorkMode = 'diorama' | 'multibase' | 'single';
+export type WorkMode = 'diorama' | 'multibase' | 'single' | 'tray';
 
-/** 'frame' = a reference outline (e.g. a unit footprint) that holds bases; 'leftover' = generated in Diorama mode. */
-export type PieceRole = 'base' | 'frame' | 'leftover';
+/**
+ * 'frame' = a reference outline (e.g. a unit footprint) that holds bases;
+ * 'leftover' = generated in Diorama mode; 'tray' = the movement tray generated
+ * for a frame at Base-ify (a child of the scene, not of the frame, so its rim can
+ * reach past the frame).
+ */
+export type PieceRole = 'base' | 'frame' | 'leftover' | 'tray';
+
+/** Movement tray settings: shared across the project, overridable per frame. */
+export interface TraySettings {
+  /** thickness of the flat sheet under the whole tray, mm */
+  floor: number;
+  /** extra room per side in each slot, mm */
+  gap: number;
+  /** how far the tray sticks out past the block of bases, mm */
+  edge: number;
+  /** a magnet hole in the floor under every base */
+  magnets: boolean;
+}
 
 export interface MagnetSlot {
   id: string;
@@ -138,6 +155,10 @@ export interface Piece {
   plugDepth?: number;
   /** mm per side; undefined = project default */
   plugClearance?: number;
+  /** on a FRAME: this frame's own movement tray settings, over the project's */
+  tray?: Partial<TraySettings>;
+  /** on a TRAY: the id of the frame it was made for */
+  trayOf?: string;
   magnets: { mode: 'auto' | 'manual'; slots: MagnetSlot[] };
   children: string[];
 }
@@ -174,6 +195,8 @@ export interface Project {
   export: ExportSettings;
   underside: UndersideSettings;
   plug: PlugSettings;
+  /** movement tray defaults (Movement tray mode) */
+  tray: TraySettings;
   /** Base Studio scenes, by document id (saved with the project so they can be re-opened and re-baked) */
   studio?: Record<string, StudioDocument>;
   /** edge profile given to newly added bases when their size preset does not imply one */

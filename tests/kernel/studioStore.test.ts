@@ -44,7 +44,8 @@ vi.mock('@/worker/client', () => ({
     scatterStudio: async (doc: StudioDocument) => scatterScene(doc, SOURCE),
     previewStudio: async (doc: StudioDocument) => {
       const hf = buildGround(doc, previewCell(doc));
-      const slab = heightfieldToSlab(hf, { zBase: doc.board.plateTop - 0.1, clipTo: groundClip(doc) });
+      const clip = groundClip(doc);
+      const slab = heightfieldToSlab(hf, { zBase: doc.board.plateTop - 0.1, clipTo: clip });
       const propRanges: StudioPropRange[] = [];
       const placements: StudioPlacement[] = [];
       const soups: { positions: Float32Array; triCount: number }[] = [];
@@ -52,7 +53,7 @@ vi.mock('@/worker/client', () => ({
       for (const p of doc.props) {
         const prop = SOURCE.get(p.assetId);
         if (!prop) continue;
-        const placed = placeProp(prop, p, hf, doc.rules.sink, doc.board.plateTop);
+        const placed = placeProp(prop, p, hf, doc.rules.sink, doc.board.plateTop, clip);
         soups.push(placed.soup);
         propRanges.push({ id: p.id, start: tri, count: placed.soup.triCount });
         placements.push({ id: p.id, x: placed.x, y: placed.y, z: placed.z, rotDeg: p.rotDeg, scale: p.scale });
@@ -145,6 +146,49 @@ describe('Base Studio: picking a prop up and moving it', () => {
     expect(propOf(propId).x).toBeLessThan(0);
   });
 
+  it('drags every prop back onto a board that changed shape or size, in one undo step', () => {
+    const { propId } = loadScene();
+    const st = useStudioStore.getState();
+    // four props out at the corners of a much bigger board than the one they end up on
+    st.update((d) => {
+      [[-70, -45], [70, -45], [70, 45], [-70, 45]].forEach((c, i) => {
+        d.props.push({ id: 'far' + i, assetId: 'lib-rock', x: c[0], y: c[1], rotDeg: 0, scale: 1, sink: 0, seed: i, licence: 'own-rights', scattered: false });
+      });
+      d.board.shape = { kind: 'rect', w: 150, d: 100 };
+      d.board.margin = 0;
+    });
+    expect(propOf('far0').x).toBe(-70); // still on the big board, so nothing moved
+    const before = useStudioStore.getState().history.length;
+    st.update((d) => { d.board.shape = { kind: 'ellipse', w: 60, d: 60 }; d.board.margin = 1.5; });
+    // a prop left at its old spot would hang in mid air beside the new board
+    const limit = 31.5 - propClearance(doc()) + 1e-6;
+    for (const p of doc().props) expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(limit);
+    expect(propOf(propId).x).toBe(0); // one that was already on the board is untouched
+    expect(useStudioStore.getState().history.length).toBe(before + 1);
+    // and one undo puts the board AND the props back
+    useStudioStore.getState().undo();
+    expect(doc().board.shape.w).toBe(150);
+    expect(propOf('far0').x).toBe(-70);
+  });
+
+  it('folds a number being typed into one undo step, and starts a new one for the next box', () => {
+    const { propId } = loadScene();
+    const st = useStudioStore.getState();
+    const before = useStudioStore.getState().history.length;
+    // "-18" arrives one keystroke at a time from the same box
+    st.editProp(propId, { x: -1 }, { coalesce: 'x' });
+    st.editProp(propId, { x: -18 }, { coalesce: 'x' });
+    expect(propOf(propId).x).toBe(-18);
+    expect(useStudioStore.getState().history.length).toBe(before + 1);
+    // a different box is a change of its own
+    useStudioStore.getState().editProp(propId, { y: 7 }, { coalesce: 'y' });
+    expect(useStudioStore.getState().history.length).toBe(before + 2);
+    // one undo takes back the whole number, not the last key of it
+    useStudioStore.getState().undo();
+    useStudioStore.getState().undo();
+    expect(propOf(propId).x).toBe(0);
+  });
+
   it('names every number, and every number stays in its limits', () => {
     const { propId } = loadScene();
     const st = useStudioStore.getState();
@@ -203,7 +247,7 @@ describe('Base Studio: picking a prop up and moving it', () => {
     for (const r of preview.propRanges) {
       const at2 = preview.placements.find((p) => p.id === r.id)!;
       const prop = doc().props.find((p) => p.id === r.id)!;
-      const placed = placeProp(SOURCE.get(prop.assetId)!, prop, hf, doc().rules.sink, doc().board.plateTop);
+      const placed = placeProp(SOURCE.get(prop.assetId)!, prop, hf, doc().rules.sink, doc().board.plateTop, groundClip(doc()));
       expect(placed.z).toBeCloseTo(at2.z, 6);
       expect(at2.x).toBeCloseTo(prop.x, 6);
       expect(at2.rotDeg).toBeCloseTo(prop.rotDeg, 6);

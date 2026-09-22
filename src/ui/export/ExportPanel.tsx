@@ -10,6 +10,7 @@ export function ExportPanel() {
   const defaultProfile = useAppStore((s) => s.project.defaultProfile);
   const setExportSettings = useAppStore((s) => s.setExportSettings);
   const selectedId = useAppStore((s) => s.project.selectedId);
+  const workMode = useAppStore((s) => s.project.mode);
   const piece = useAppStore((s) => (selectedId ? (s.project.pieces[selectedId] ?? null) : null));
   const geom = useAppStore((s) => (selectedId ? s.geometry[selectedId] : undefined));
   const measuredScale = useAppStore((s) => (piece ? s.project.sources[piece.sourceId]?.normalization.measuredScale : undefined));
@@ -32,13 +33,18 @@ export function ExportPanel() {
   }
 
   const ps = exportSettings.presupport;
+  const isTray = piece?.role === 'tray';
+  const trayInfo = data?.tray;
   let printLine: string | null = null;
   if (data && piece && ps.enabled) {
     const kind = piece.shape.kind;
-    const tilt = ps.tiltDeg ?? autoTiltDeg({ kind, w: data.size.w, d: data.size.d }, piece.parentId === null ? undefined : (piece.profile ?? defaultProfile));
+    const maxDim = Math.max(data.size.w, data.size.d);
+    const tilt = ps.tiltDeg ?? (isTray ? (maxDim <= 80 ? 0 : 25) : autoTiltDeg({ kind, w: data.size.w, d: data.size.d }, piece.parentId === null ? undefined : (piece.profile ?? defaultProfile)));
     const partH = data.bounds.max[2] - data.bounds.min[2];
     const h = estimatePrintHeight(data.size, partH, tilt, ps.standoff);
-    printLine = tilt === 0 ? `flat on its supports (flat-sided bases are not tilted), about ${Math.round(h)} mm tall, ${ps.standoff} mm above the plate` : `tilted ${tilt}°, about ${Math.round(h)} mm tall, standing ${ps.standoff} mm above the plate on supports`;
+    printLine = tilt === 0
+      ? `flat on its supports${isTray ? '' : ' (flat-sided bases are not tilted)'}, about ${Math.round(h)} mm tall, ${ps.standoff} mm above the plate`
+      : `tilted ${tilt}°, about ${Math.round(h)} mm tall, standing ${ps.standoff} mm above the plate on supports`;
   }
   const setPs = (patch: Partial<typeof ps>) => setExportSettings({ presupport: { ...ps, ...patch } });
 
@@ -85,9 +91,21 @@ export function ExportPanel() {
         )}
         {ps.enabled && printLine && (
           <div className="field-row">
-            <span>Selected base prints</span>
+            <span>{isTray ? 'This tray prints' : 'Selected base prints'}</span>
             <span>{printLine}</span>
           </div>
+        )}
+        {isTray && (
+          <Hint>
+            A tray is a broad thin panel, so it is not tilted like a base: small ones print flat on their supports and big ones get a shallow 25° tilt.
+            Big thin trays curl as they cure — if yours does, make the floor thicker (Bases tab) rather than printing it straight on the plate.
+            The tray is downloaded with your bases in “Download every base”.
+          </Hint>
+        )}
+        {isTray && trayInfo?.magnetMode === 'through' && (
+          <Hint>
+            The magnet holes go right through this floor, so do not print it flat on the plate: a hole facing the plate can trap resin. Leave “Tilt and support” on, or make the floor thicker so the holes stay inside it.
+          </Hint>
         )}
         {ps.enabled && (
           <details className="details">
@@ -152,6 +170,7 @@ export function ExportPanel() {
           <span>Slightly smaller for trays</span>
         </label>
         <Hint>Shrinks each side by the amount below so bases drop into MDF or 3D-printed trays easily.</Hint>
+        {workMode === 'tray' && <Hint>You do not need this in Movement tray mode: each slot already leaves room around its base. A tray itself is always made at its true size.</Hint>}
 
         {exportSettings.sizing === 'clearance' && (
           <label className="field indent">
