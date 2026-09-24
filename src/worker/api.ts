@@ -157,7 +157,10 @@ export interface MeshTransfer {
 
 /** What a finished movement tray turned out like: what the Bases tab and the Export tab report. */
 export interface TrayInfo {
+  /** the floor as built: deepened for the magnets when the setting was thinner than they are, mm */
   floor: number;
+  /** the floor the settings asked for, mm */
+  floorAsked: number;
   plateHeight: number;
   /** 'recess' = magnet pockets in the top face; 'through' = holes right through the floor */
   magnetMode: 'none' | 'recess' | 'through';

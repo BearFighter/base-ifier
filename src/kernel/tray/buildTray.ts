@@ -43,6 +43,19 @@ export interface TrayMagnets {
   floorMin: number;
 }
 
+/**
+ * The floor a tray is actually built with: what was asked for, or, when there are
+ * magnets, at least deep enough for the deepest one plus the material that must stay
+ * under it. Magnets never poke through and never stand proud into a slot, so a base
+ * still sits flush on the floor; the whole tray simply gets that much deeper.
+ */
+export function effectiveTrayFloor(floor: number, slots: { depth: number }[], floorMin: number): number {
+  if (slots.length === 0) return floor;
+  const deepest = slots.reduce((m, s) => Math.max(m, s.depth), 0);
+  const need = Math.ceil((deepest + floorMin) * 10 - 1e-6) / 10;
+  return Math.max(floor, need);
+}
+
 export interface TraySpec {
   /** thickness of the flat sheet under the whole tray, mm */
   floor: number;

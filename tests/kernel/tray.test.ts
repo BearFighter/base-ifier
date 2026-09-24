@@ -393,13 +393,15 @@ describe('tray in the pipeline', () => {
       const frameRes = computePiece(root, { shape: { kind: 'rect', w: 50, d: 25 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, profile: PROFILE_FLAT, role: 'frame' }, { source: src, skipSculpt: true });
       const base = computePiece(frameRes.frame, { shape: { kind: 'rect', w: 25, d: 25 }, xy: [-12.5, 0], rotDeg: 0, edges: FLAT4, profile: PROFILE_FLAT }, { source: src, hollow: DEFAULT_HOLLOW });
       const tray = computePiece(root, { shape: { kind: 'rect', w: 56, d: 31 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, role: 'tray', tray: trayParamsFor(2, 25, t) }, { source: src });
-      // the base's own plate height plus the floor IS the tray's height: both tops meet
-      expect(tray.outline.plateTop - t).toBeCloseTo(base.outline.plateTop, 9);
+      // with 2 mm magnets a floor under 2.7 mm is made 2.7 mm; the base's plate height plus the floor as built IS the tray's height
+      const f = tray.tray!.floor;
+      expect(f).toBeCloseTo(Math.max(t, 2.7), 6);
+      expect(tray.outline.plateTop - f).toBeCloseTo(base.outline.plateTop, 9);
       // and the scenery on the tray sits exactly the floor thickness above the scenery on the base
       const bz = boundsOfSoup(base.sculpt).min[2];
-      expect(boundsOfSoup(tray.sculpt).min[2] - t).toBeCloseTo(bz, 4);
+      expect(boundsOfSoup(tray.sculpt).min[2] - f).toBeCloseTo(bz, 4);
       // the opening's floor is the top of the floor slab, whatever it is
-      expect(zRangeOver(tray.body, rectPolygon(44, 20)).max).toBeCloseTo(t, 5);
+      expect(zRangeOver(tray.body, rectPolygon(44, 20)).max).toBeCloseTo(f, 5);
     }
   });
 
@@ -413,12 +415,15 @@ describe('tray in the pipeline', () => {
     expect(tray.size.d).toBeCloseTo(31, 6);
     expect(tray.tray).toBeDefined();
     expect(tray.tray!.cells).toBe(4);
-    expect(tray.tray!.magnetMode).toBe('through');
+    expect(tray.tray!.magnetMode).toBe('recess');
+    expect(tray.tray!.floorAsked).toBeCloseTo(1, 6);
+    expect(tray.tray!.floor).toBeCloseTo(2.7, 6); // deepened for the 2 mm magnets
+    expect(boundsOfSoup(tray.body).max[2]).toBeCloseTo(2.7 + 3, 5); // and the surround rose with it
     expect(tray.tray!.watermark).toBe(true);
     expect(Math.max(tray.tray!.thinSpan.w, tray.tray!.thinSpan.d)).toBeGreaterThan(40);
     const b = boundsOfSoup(tray.body);
     expect(b.max[0] - b.min[0]).toBeCloseTo(56, 5);
-    expect(b.max[2]).toBeCloseTo(4, 5);
+    expect(b.max[2]).toBeCloseTo(2.7 + 3, 5);
   });
 
   it('bumps the cut stamp for every cell, so no cell loses the scenery another one touched', () => {
@@ -453,7 +458,7 @@ describe('tray in the pipeline', () => {
   it('carves a tray out of an object scene and stands it on its own floor', () => {
     const src = prepareSource(boxSoup(60, 40, 8), 'slab_60x40.stl');
     expect(src.mode).toBe('generic');
-    const t = 1.5;
+    const t = 2.7; // thick enough for the 2 mm magnets, so the floor is exactly what was asked
     const tray = computePiece(sourceFrame(src), { shape: { kind: 'rect', w: 56, d: 31 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, role: 'tray', tray: trayParamsFor(2, 25, t, { watermark: '' }) }, { source: src });
     expect(tray.warnings.filter((w) => /failed|force-closed/.test(w))).toEqual([]);
     expect(tray.outline.plateTop).toBeCloseTo(t, 9);
@@ -473,7 +478,14 @@ describe('tray in the pipeline', () => {
     // with the mark on, an object scene has no analytic wall to emboss, so it hides in a slot
     const marked = computePiece(sourceFrame(src), { shape: { kind: 'rect', w: 56, d: 31 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, role: 'tray', tray: trayParamsFor(2, 25, t) }, { source: src });
     expect(marked.tray!.watermark).toBe(true);
-    expect(boundsOfSoup(marked.body).max[2]).toBeCloseTo(t + 0.2, 5);
+    // a 2.7 mm floor band is tall enough to carry the mark on its outer wall, so nothing stands above the floor
+    expect(boundsOfSoup(marked.body).max[2]).toBeCloseTo(t, 5);
+    // without magnets a 1.5 mm floor is kept as asked; too short for a wall mark, so the mark
+    // falls back to the floor inside the biggest slot, 0.2 mm proud, under the base's hollow void
+    const thin = computePiece(sourceFrame(src), { shape: { kind: 'rect', w: 56, d: 31 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, role: 'tray', tray: trayParamsFor(2, 25, 1.5, { magnets: undefined }) }, { source: src });
+    expect(thin.tray!.floor).toBeCloseTo(1.5, 6);
+    expect(thin.tray!.watermark).toBe(true);
+    expect(boundsOfSoup(thin.body).max[2]).toBeCloseTo(1.5 + 0.2, 5);
   });
 
   it('reports a slot at the tray edge, a magnet thicker than the floor, and mixed edge shapes', () => {
@@ -483,8 +495,9 @@ describe('tray in the pipeline', () => {
     const tight = computePiece(root, { shape: { kind: 'rect', w: 50.6, d: 25.6 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, role: 'tray', tray: trayParamsFor(2, 25, 1) }, { source: src });
     expect(tight.warnings.some((w) => /less than 1 mm from the edge|past the edge/.test(w))).toBe(true);
     const thin = computePiece(root, { shape: { kind: 'rect', w: 56, d: 31 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, role: 'tray', tray: trayParamsFor(2, 25, 1) }, { source: src });
-    expect(thin.warnings.some((w) => /right through/.test(w))).toBe(true);
-    expect(thin.tray!.magnetFloorWanted).toBeCloseTo(2.7, 6);
+    expect(thin.warnings.some((w) => /right through/.test(w))).toBe(false);
+    expect(thin.tray!.floor).toBeCloseTo(2.7, 6);
+    expect(thin.tray!.floorAsked).toBeCloseTo(1, 6);
     const mixed = computePiece(root, { shape: { kind: 'rect', w: 56, d: 31 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, role: 'tray', tray: trayParamsFor(2, 25, 3, { mixedHeights: true }) }, { source: src });
     expect(mixed.warnings.some((w) => /same edge shape/.test(w))).toBe(true);
     expect(mixed.tray!.magnetMode).toBe('recess');

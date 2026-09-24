@@ -14,7 +14,7 @@ export const TRAY_HELP = {
   floor: 'How thick the flat sheet under the whole tray is. Thin trays can curl as the resin cures, so go thicker on big trays — 1 mm is fine up to about a hand’s width.',
   gap: 'Extra room in each slot so a printed base drops in without forcing it. 0.2 mm suits resin, 0.3 mm for FDM.',
   edge: 'How far the tray sticks out past the bases, so there is always an edge to pick it up by. It is also what stiffens the tray, so do not go below 2 mm on a big one.',
-  magnets: 'Puts a magnet hole in the tray floor under every base, lined up with the base’s own magnet. Check which way round the magnets go before you glue them.',
+  magnets: 'Puts a magnet hole in the tray floor under every base, lined up with the base’s own magnet. If the floor is thinner than the magnets, the whole tray is made deep enough for them, so nothing pokes through and the bases still sit flush. Check which way round the magnets go before gluing.',
   spacing: 'Leaves a gap between bases when you fill the frame. A small gap gives the tray a raised wall between each base — it looks more like a real tray and stops a big thin floor from curling.',
   profile: 'Bases keep the edge shape you picked. Slots are sized from the bottom of the base, so any edge shape drops in; a sloped edge leaves a small groove around the base in the tray.',
 };
@@ -40,16 +40,12 @@ export function TrayFloorCallout({ tray, floor, onSetFloor }: { tray: TrayInfo |
   );
 }
 
-/** The loud one: the magnets are thicker than the floor, so their holes go right through. */
-export function TrayMagnetCallout({ tray, onSetFloor }: { tray: TrayInfo | undefined; onSetFloor: (v: number) => void }) {
-  if (!tray || tray.magnetMode !== 'through') return null;
+/** When the magnets need more floor than was asked for, the tray is simply made that deep; say so. */
+export function TrayMagnetCallout({ tray }: { tray: TrayInfo | undefined; onSetFloor?: (v: number) => void }) {
+  if (!tray || tray.magnetMode === 'none' || tray.floor <= tray.floorAsked + 1e-6) return null;
   return (
-    <div className="callout tray-callout warn-callout">
-      Your magnets are thicker than the {tray.floor.toFixed(1)} mm floor, so their holes go right through it. A magnet would then stand proud underneath and the tray would rock on the table.
-      <div>
-        <button type="button" className="primary" onClick={() => onSetFloor(tray.magnetFloorWanted)}>Make the floor {tray.magnetFloorWanted} mm</button>
-      </div>
-      Or use thinner magnets, or turn the tray magnets off.
+    <div className="callout tray-callout">
+      The floor is {tray.floor.toFixed(1)} mm here rather than {tray.floorAsked.toFixed(1)}: the magnets need that much to sit fully inside it. The surround rises with the floor, so the bases still sit flush.
     </div>
   );
 }

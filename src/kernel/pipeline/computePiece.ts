@@ -20,7 +20,7 @@ import { addRing, addWatermark, placeWatermark, ringFor, MIN_CEILING } from '../
 import type { KeepOutCircle } from '../body/hollow';
 import { offsetEdges, slotWallWarnings, traySurroundCells } from '../tray/cells';
 import type { TrayCell } from '../tray/cells';
-import { buildTray } from '../tray/buildTray';
+import { effectiveTrayFloor, buildTray } from '../tray/buildTray';
 import { SoupBuilder } from '../types';
 import { transformSoup } from '../mesh/transform';
 import { signedVolume } from '../mesh/volume';
@@ -132,7 +132,10 @@ export interface PieceResult {
   carved?: { floorZ: number; thickness: number; plug: boolean };
   /** set on a movement tray: everything the export and the UI need, in the piece's own frame */
   tray?: {
+    /** the floor as built (deepened for the magnets when needed), mm */
     floor: number;
+    /** the floor the settings asked for, mm */
+    floorAsked: number;
     plateHeight: number;
     /** slot openings, local frame */
     pockets: Polygon2[];
@@ -186,8 +189,11 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   // A tray is always a straight-sided plate whose height is its floor plus the surround,
   // which is what makes a slotted base sit flush with it at any floor thickness.
   const trayParams = params.role === 'tray' ? params.tray : undefined;
+  // with magnets the floor is made deep enough for them (never a hole through, never a
+  // magnet standing proud into a slot), and the surround rises with it, so bases stay flush
+  const trayFloor = trayParams ? effectiveTrayFloor(trayParams.floor, trayParams.magnets ?? [], trayParams.magnetFloorMin ?? 0.6) : 0;
   const profile: EdgeProfile = trayParams
-    ? { kind: 'inset', inset: 0, height: trayParams.floor + trayParams.plateHeight }
+    ? { kind: 'inset', inset: 0, height: trayFloor + trayParams.plateHeight }
     : (params.profile ?? { kind: 'original' });
   let bottomS: Polygon2, topS: Polygon2;
   let sculptCutter: Polygon2 | null = null;
@@ -383,7 +389,7 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     const pocketsL = trayParams.pockets.map(toLocal);
     const magnetsL = (trayParams.magnets ?? []).map((m) => ({ ...m, x: (m.x - origin[0]) * scale, y: (m.y - origin[1]) * scale }));
     const res = buildTray(bottomL, trayCarveFloor !== null ? [] : cellsL, {
-      floor: trayParams.floor * scale,
+      floor: trayFloor * scale,
       plateHeight: trayParams.plateHeight * scale,
       magnets: magnetsL.length ? { slots: magnetsL, floorMin: trayParams.magnetFloorMin ?? 0.6 } : undefined,
       watermark: trayParams.watermark,
@@ -392,12 +398,13 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
       pockets: pocketsL,
       gap: trayParams.gap,
       // in an object scene there is no analytic surround to emboss, so the mark stays in the floor band
-      markMaxZ: trayCarveFloor !== null ? trayParams.floor * scale : undefined,
+      markMaxZ: trayCarveFloor !== null ? trayFloor * scale : undefined,
     });
     warnings.push(...res.warnings);
     body = res.soup;
     trayInfo = {
-      floor: trayParams.floor * scale,
+      floor: trayFloor * scale,
+      floorAsked: trayParams.floor * scale,
       plateHeight: trayParams.plateHeight * scale,
       pockets: pocketsL,
       magnets: magnetsL,

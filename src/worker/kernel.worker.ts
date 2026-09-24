@@ -353,7 +353,7 @@ const api: KernelApi = {
       hasSculpt: !req.skipSculpt,
       carved: r.carved,
       tray: r.tray
-        ? { floor: r.tray.floor, plateHeight: r.tray.plateHeight, magnetMode: r.tray.magnetMode, magnetFloorWanted: r.tray.magnetFloorWanted, thinSpan: r.tray.thinSpan, cells: r.tray.cells, watermark: r.tray.watermark }
+        ? { floor: r.tray.floor, floorAsked: r.tray.floorAsked, plateHeight: r.tray.plateHeight, magnetMode: r.tray.magnetMode, magnetFloorWanted: r.tray.magnetFloorWanted, thinSpan: r.tray.thinSpan, cells: r.tray.cells, watermark: r.tray.watermark }
         : undefined,
       warnings: r.warnings,
       bodyVolume: r.bodyVolume,
