@@ -17,8 +17,9 @@ export interface HollowSpec {
   depth: number;
   /** solid brim kept around the footprint, mm */
   rim: number;
-  /** magnet locating rings on the ceiling: how far they hang down and how thick their wall is, mm */
+  /** no longer used: the magnet cup always runs from the ceiling to the bottom (kept so older projects load) */
   ringHeight: number;
+  /** wall thickness of the cup that holds each magnet, mm */
   ringWidth: number;
   /** raised text on the ceiling (upper case, digits, space, - . _), mm tall; empty text = none */
   watermark: string;
@@ -51,8 +52,41 @@ export function addBox(out: SoupBuilder, x0: number, y0: number, z0: number, x1:
 }
 
 /**
+ * The cup that holds a magnet in a hollow underside: a tube from the seating plane
+ * (z = 0) up into the void ceiling, so the magnet is gripped along its whole height
+ * and its face sits flush with the bottom of the base, where it meets the magnet
+ * recessed in a movement tray (or the table). When the magnet is thinner than the
+ * void, a plug fills the tube above it, so the hole is exactly the magnet's depth
+ * (thickness plus depth tolerance). The plug is its own closed shell, a hair wider
+ * than the hole and half a step out of phase, so it never shares a vertex with the tube.
+ */
+export function addMagnetCup(out: SoupBuilder, slot: { x: number; y: number; radius: number; depth: number; sides: number }, ro: number, voidDepth: number): void {
+  addRing(out, slot.x, slot.y, slot.radius, ro, 0, voidDepth + 0.1, slot.sides);
+  if (slot.depth < voidDepth - 1e-6) addPlug(out, slot.x, slot.y, slot.radius + 0.05, slot.depth, voidDepth + 0.05, slot.sides);
+}
+
+/** A closed cylinder between z0 and z1, rotated half a step so its vertices never meet a ring's. */
+function addPlug(out: SoupBuilder, cx: number, cy: number, r: number, z0: number, z1: number, sides: number): void {
+  const n = Math.max(12, Math.round(sides));
+  const pt = (i: number): Vec2 => {
+    const a = ((i + 0.5) / n) * Math.PI * 2;
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  };
+  for (let i = 0; i < n; i++) {
+    const p = pt(i), q = pt((i + 1) % n);
+    // wall, faces outward
+    out.tri(p[0], p[1], z0, q[0], q[1], z0, q[0], q[1], z1);
+    out.tri(p[0], p[1], z0, q[0], q[1], z1, p[0], p[1], z1);
+    // bottom disc, faces -z: the ceiling of the magnet hole
+    out.tri(cx, cy, z0, q[0], q[1], z0, p[0], p[1], z0);
+    // top disc, faces +z (buried in the void ceiling)
+    out.tri(cx, cy, z1, p[0], p[1], z1, q[0], q[1], z1);
+  }
+}
+
+/**
  * A closed annular prism (a ring) between z0 and z1, inner radius ri, outer ro.
- * Used for magnet locating rings hanging from the ceiling (z1 sits inside the ceiling).
+ * Used for the magnet cups of a hollow underside (z1 sits inside the ceiling).
  */
 export function addRing(out: SoupBuilder, cx: number, cy: number, ri: number, ro: number, z0: number, z1: number, sides: number): void {
   const n = Math.max(12, Math.round(sides));

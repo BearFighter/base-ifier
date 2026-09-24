@@ -69,17 +69,17 @@ describe('object mode (single-shell files)', () => {
     expect(r.carved!.plug).toBe(false);
     expect(r.carved!.thickness).toBeCloseTo(7.95, 2);
     expect(r.underside).toBeDefined();
-    expect(r.underside!.depth).toBeCloseTo(2, 6);
+    expect(r.underside!.depth).toBeCloseTo(2.1, 6); // deep enough for the 2 mm magnet + 0.1 mm tolerance
     // the base is the object's own material: floor at z = 0, top at the object's top, one closed shell with a hollow underside
     expect(minZ(r.sculpt)).toBeCloseTo(0, 6);
     expect(maxZ(r.sculpt)).toBeCloseTo(7.95, 2);
     expect(isWatertight(r.sculpt)).toBe(true);
-    // the body carries only the magnet ring (and watermark), no plate
+    // the body carries only the magnet cup (and watermark), no plate: nothing above 0.1 mm into the ceiling
     expect(r.body.triCount).toBeGreaterThan(0);
     expect(isWatertight(r.body)).toBe(true);
-    expect(maxZ(r.body)).toBeLessThan(2.2);
+    expect(maxZ(r.body)).toBeLessThanOrEqual(r.underside!.depth + 0.1 + 1e-5);
     const volSolid = 20 * 20 * 7.95;
-    const volVoid = 16 * 16 * 2;
+    const volVoid = 16 * 16 * r.underside!.depth;
     expect(signedVolume(r.sculpt)).toBeCloseTo(volSolid - volVoid, 1);
     expect(r.outline.plateTop).toBeCloseTo(7.95, 2);
     expect(r.warnings.filter((w) => /plate|slope/i.test(w))).toEqual([]);

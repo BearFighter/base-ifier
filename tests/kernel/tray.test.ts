@@ -619,3 +619,83 @@ describe('tray assembly: a base dropped into its slot', () => {
     }
   }
 });
+
+/**
+ * The magnet in a hollow base sits in a cup that runs from the void ceiling down to the
+ * bottom of the base: the hole starts AT the seating plane and is exactly the magnet's
+ * depth, so the magnet's face is flush with the base's bottom and meets the tray's magnet.
+ */
+describe('magnet cup: flush with the bottom of the base', () => {
+  /** lowest surface above z = 0 hit by rays shot straight up from points inside a disc: the ceiling of the magnet hole */
+  function holeCeiling(s: Soup, r: number): number {
+    const P = s.positions;
+    let worst = -Infinity;
+    for (const [px, py] of [[0, 0], [r * 0.7, 0], [0, -r * 0.7], [-r * 0.5, r * 0.5]]) {
+      let hit = Infinity;
+      for (let i = 0; i < s.triCount * 9; i += 9) {
+        const ax = P[i], ay = P[i + 1], bx = P[i + 3], by = P[i + 4], cx = P[i + 6], cy = P[i + 7];
+        const den = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+        if (Math.abs(den) < 1e-12) continue;
+        const w0 = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / den;
+        const w1 = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / den;
+        const w2 = 1 - w0 - w1;
+        if (w0 < -1e-9 || w1 < -1e-9 || w2 < -1e-9) continue;
+        const z = w0 * P[i + 2] + w1 * P[i + 5] + w2 * P[i + 8];
+        if (z > 0.01 && z < hit) hit = z;
+      }
+      worst = Math.max(worst, hit);
+    }
+    return worst;
+  }
+  /** triangles lying in the seating plane inside an annulus: the rim of the cup */
+  function rimAt0(s: Soup, r0: number, r1: number): number {
+    const P = s.positions;
+    let n = 0;
+    for (let i = 0; i < s.triCount * 9; i += 9) {
+      if (Math.max(Math.abs(P[i + 2]), Math.abs(P[i + 5]), Math.abs(P[i + 8])) > 1e-6) continue;
+      const d = Math.hypot((P[i] + P[i + 3] + P[i + 6]) / 3, (P[i + 1] + P[i + 4] + P[i + 7]) / 3);
+      if (d > r0 && d < r1) n++;
+    }
+    return n;
+  }
+  const cases = [
+    { name: 'standard 3 x 2 mm magnet', thick: 2 },
+    { name: 'thin 3 x 1 mm magnet', thick: 1 },
+  ];
+  for (const scn of [{ name: 'two-shell', src: scene }, { name: 'object', src: () => prepareSource(boxSoup(80, 50, 8), 'slab_80x50.stl') }]) {
+    for (const c of cases) {
+      it(`${scn.name} scene, ${c.name}`, () => {
+        const src = scn.src();
+        const root = sourceFrame(src);
+        const frameRes = computePiece(root, { shape: { kind: 'rect', w: 50, d: 25 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, profile: PROFILE_FLAT, role: 'frame' }, { source: src, skipSculpt: true });
+        const sz = { dia: 3, thick: c.thick, radialTol: 0.1, depthTol: 0.1, sides: 24 };
+        const [slot] = magnetSlotSpecs(sz, [{ x: 0, y: 0 }]);
+        const base = computePiece(frameRes.frame, { shape: { kind: 'rect', w: 25, d: 25 }, xy: [-12.5, 0], rotDeg: 0, edges: FLAT4, profile: PROFILE_FLAT }, { source: src, hollow: DEFAULT_HOLLOW, magnetSlots: [slot] });
+        expect(base.warnings.filter((w) => /magnet/i.test(w))).toEqual([]);
+        expect(isWatertight(base.body)).toBe(true);
+        // the hole goes up from the seating plane exactly the magnet's depth (a carved base's
+        // void ceiling is part of its own material, so look at body and material together)
+        const both: Soup = { positions: new Float32Array([...base.body.positions.subarray(0, base.body.triCount * 9), ...base.sculpt.positions.subarray(0, base.sculpt.triCount * 9)]), triCount: base.body.triCount + base.sculpt.triCount };
+        expect(holeCeiling(both, slot.radius - 0.2)).toBeCloseTo(slot.depth, 5);
+        // and the cup's rim lies in the seating plane around it
+        expect(rimAt0(base.body, slot.radius, slot.radius + DEFAULT_HOLLOW.ringWidth)).toBeGreaterThan(10);
+      });
+    }
+  }
+
+  it('deepens the void for a magnet thicker than it, and warns when the base is too thin for it', () => {
+    const src = scene();
+    const root = sourceFrame(src);
+    const frameRes = computePiece(root, { shape: { kind: 'rect', w: 50, d: 25 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, profile: PROFILE_FLAT, role: 'frame' }, { source: src, skipSculpt: true });
+    const place = (thick: number) => {
+      const [slot] = magnetSlotSpecs({ dia: 3, thick, radialTol: 0.1, depthTol: 0.1, sides: 24 }, [{ x: 0, y: 0 }]);
+      return { slot, base: computePiece(frameRes.frame, { shape: { kind: 'rect', w: 25, d: 25 }, xy: [-12.5, 0], rotDeg: 0, edges: FLAT4, profile: PROFILE_FLAT }, { source: src, hollow: DEFAULT_HOLLOW, magnetSlots: [slot] }) };
+    };
+    const ok = place(2.1); // needs 2.2 mm: fits under a 3 mm plate with a 0.8 mm ceiling
+    expect(ok.base.underside!.depth).toBeCloseTo(2.2, 6);
+    expect(ok.base.warnings.filter((w) => /magnet/i.test(w))).toEqual([]);
+    expect(holeCeiling(ok.base.body, ok.slot.radius - 0.2)).toBeCloseTo(2.2, 5);
+    const tooThick = place(3); // needs 3.1 mm: more than the plate leaves
+    expect(tooThick.base.warnings.some((w) => /stick out/.test(w))).toBe(true);
+  });
+});

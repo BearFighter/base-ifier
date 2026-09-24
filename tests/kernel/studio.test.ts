@@ -309,7 +309,7 @@ describe('Base Studio scenes', () => {
     const slots = magnetSlotSpecs({ dia: 3, thick: 2, radialTol: 0.1, depthTol: 0.1, sides: 24 }, [{ x: 0, y: 0 }]);
     const base = computePiece(root.frame, { shape: { kind: 'rect', w: 25, d: 25 }, xy: [-50, 0], rotDeg: 0, edges, profile: { kind: 'inset', inset: 0, height: 3 } }, { source: src, magnetSlots: slots, hollow: DEFAULT_HOLLOW });
     expect(isWatertight(base.body)).toBe(true);
-    expect(base.underside?.depth).toBeCloseTo(2, 6);
+    expect(base.underside?.depth).toBeCloseTo(2.1, 6); // deep enough for the 2 mm magnet + 0.1 mm tolerance
     const sculpt = base.sculptMesh ? { positions: new Float32Array(0), triCount: 0 } : base.sculpt;
     expect(sculpt.triCount).toBeGreaterThan(100);
     const sb = boundsOfSoup(sculpt);

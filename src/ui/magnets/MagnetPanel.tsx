@@ -14,11 +14,14 @@ function UndersideSection() {
   const u = useAppStore((s) => s.project.underside);
   const magnet = useAppStore((s) => s.project.magnet);
   const setUnderside = useAppStore((s) => s.setUndersideSettings);
-  const flushNote = Math.abs(u.voidDepth - magnet.thick) < 0.05 ? 'A glued magnet ends flush with the brim.' : u.voidDepth > magnet.thick ? `A glued magnet sits ${(u.voidDepth - magnet.thick).toFixed(1)} mm inside the brim.` : `The void is shallower than the ${magnet.thick} mm magnet: it would stick out.`;
+  const magnetDepth = magnet.thick + magnet.depthTol;
+  const flushNote = magnetDepth > u.voidDepth + 1e-6
+    ? `Each magnet sits in a cup flush with the bottom of the base; the void is made ${magnetDepth.toFixed(1)} mm deep so your ${magnet.thick} mm magnets fit.`
+    : 'Each magnet sits in a cup that ends flush with the bottom of the base, so it meets the magnet in a movement tray face to face.';
   return (
     <div className="field-col">
       <div className="field-col-title">Underside</div>
-      <label className="radio-row" title="Hollow bases with a solid brim print flat on the plate, are lighter, and take magnets glued to the ceiling of the void">
+      <label className="radio-row" title="Hollow bases with a solid brim print flat on the plate, are lighter, and hold each magnet in a cup flush with the bottom">
         <input type="checkbox" checked={u.hollow} onChange={(e) => setUnderside({ hollow: e.target.checked })} />
         <span>Hollow underside with a brim</span>
       </label>
@@ -34,11 +37,8 @@ function UndersideSection() {
           <Field label="Watermark" help="Raised text on the ceiling of the void, mirrored so it reads from below. Skipped automatically when a base is too small for it. Leave empty for none.">
             <input type="text" maxLength={24} value={u.watermark} onChange={(e) => setUnderside({ watermark: e.target.value })} />
           </Field>
-          <Details summary="Ring and watermark sizes">
-            <Field label="Magnet ring height" unit="mm" help="How far the locating ring hangs from the ceiling. It centres the magnet while the glue sets.">
-              <input type="number" step={0.1} min={0.2} value={u.ringHeight} onChange={(e) => setUnderside({ ringHeight: Number(e.target.value) })} />
-            </Field>
-            <Field label="Magnet ring wall" unit="mm">
+          <Details summary="Magnet cup and watermark sizes">
+            <Field label="Magnet cup wall" unit="mm" help="How thick the wall of the cup around each magnet is. The cup runs from the ceiling of the void to the bottom of the base, so the magnet is held along its whole height with its face flush with the bottom.">
               <input type="number" step={0.1} min={0.2} value={u.ringWidth} onChange={(e) => setUnderside({ ringWidth: Number(e.target.value) })} />
             </Field>
             <Field label="Watermark height" unit="mm">

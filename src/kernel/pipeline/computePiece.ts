@@ -16,7 +16,7 @@ import { checkMagnetSlots } from '../body/magnetSlots';
 import { cutPrism } from '../sculpt/cutPrism';
 import { cutColumnAbove, carveSockets, plugFloor, materialThickness } from './plug';
 import type { SocketSpec } from './plug';
-import { addRing, addWatermark, placeWatermark, ringFor, MIN_CEILING } from '../body/hollow';
+import { addWatermark, placeWatermark, ringFor, MIN_CEILING, addMagnetCup } from '../body/hollow';
 import type { KeepOutCircle } from '../body/hollow';
 import { offsetEdges, slotWallWarnings, traySurroundCells } from '../tray/cells';
 import type { TrayCell } from '../tray/cells';
@@ -319,7 +319,13 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     }
     if (carvedInfo && opts.hollow) {
       const rimPoly = insetConvex(bottomS, opts.hollow.rim);
-      if (carvedInfo.thickness >= opts.hollow.depth + MIN_CEILING && rimPoly.length >= 3 && polygonArea(rimPoly) >= 20) hollowCap = { void: rimPoly, depth: opts.hollow.depth };
+      if (carvedInfo.thickness >= opts.hollow.depth + MIN_CEILING && rimPoly.length >= 3 && polygonArea(rimPoly) >= 20) {
+        // deep enough for the deepest magnet, so its face sits flush with the bottom
+        const deepest = (opts.magnetSlots ?? []).reduce((m, sl) => Math.max(m, sl.depth), 0);
+        const depth = Math.min(Math.max(opts.hollow.depth, deepest), carvedInfo.thickness - MIN_CEILING);
+        if (deepest > depth + 1e-6) warnings.push(`The magnets need ${deepest.toFixed(1)} mm but only ${depth.toFixed(1)} mm fits in this base, so they would stick out below it. Use thinner magnets or a solid underside.`);
+        hollowCap = { void: rimPoly, depth };
+      }
       else warnings.push('Too thin to hollow: this base is left solid.');
     }
     if (carvedInfo && params.role !== 'leftover' && profile.kind === 'inset' && profile.inset > 0) warnings.push('Edge slope is not applied to bases carved out of an object; their sides are straight.');
@@ -429,7 +435,7 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
       for (const slot of slots) {
         const r = ringFor(slot, voidL, opts.hollow);
         if ('reason' in r) { warnings.push(r.reason); continue; }
-        addRing(out, slot.x, slot.y, r.ri, r.ro, d - opts.hollow.ringHeight, d + 0.1, slot.sides);
+        addMagnetCup(out, slot, r.ro, d);
         keepOut.push({ x: slot.x, y: slot.y, r: r.ro });
       }
       let watermark = false;

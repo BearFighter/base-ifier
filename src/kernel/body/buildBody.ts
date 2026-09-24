@@ -7,7 +7,7 @@ import type { BodyOutline, MagnetSlotSpec, Polygon2, Soup } from '../types';
 import { SoupBuilder } from '../types';
 import { polygonCentroid, polygonArea } from '../geom2d/polygon';
 import { insetConvex } from '../geom2d/offset';
-import { addRing, addWatermark, placeWatermark, ringFor, MIN_CEILING } from './hollow';
+import { addWatermark, placeWatermark, ringFor, MIN_CEILING, addMagnetCup } from './hollow';
 import type { HollowSpec, KeepOutCircle } from './hollow';
 
 export interface BuildBodyResult {
@@ -18,8 +18,12 @@ export interface BuildBodyResult {
 }
 
 /** Decide whether a base can be hollowed as asked; null = keep it solid (with a warning). */
-function hollowPlan(spec: HollowSpec, bottom: Polygon2, plateTop: number, warnings: string[]): { voidPoly: Polygon2; depth: number } | null {
-  const depth = Math.min(spec.depth, plateTop - MIN_CEILING);
+function hollowPlan(spec: HollowSpec, bottom: Polygon2, plateTop: number, slots: MagnetSlotSpec[], warnings: string[]): { voidPoly: Polygon2; depth: number } | null {
+  // the void is at least as deep as the deepest magnet (thickness + depth tolerance), so every
+  // magnet's face can sit flush with the bottom of the base
+  const deepest = slots.reduce((m, sl) => Math.max(m, sl.depth), 0);
+  const depth = Math.min(Math.max(spec.depth, deepest), plateTop - MIN_CEILING);
+  if (deepest > depth + 1e-6) warnings.push(`The magnets need ${deepest.toFixed(1)} mm but only ${depth.toFixed(1)} mm fits under the top of this base, so they would stick out below it. Use thinner magnets or a solid underside.`);
   if (depth < 0.5) { warnings.push('too thin to hollow: the underside is left solid'); return null; }
   const voidPoly = insetConvex(bottom, spec.rim);
   if (voidPoly.length < 3 || polygonArea(voidPoly) < 20) { warnings.push('too small to hollow: the brim would fill the underside, left solid'); return null; }
@@ -37,8 +41,8 @@ export function slotCircle(slot: MagnetSlotSpec): Polygon2 {
 
 /**
  * `hollow`: recess the underside inside a solid brim (the seating plane is then
- * only the brim); magnet slots become locating rings hanging from the void
- * ceiling and an optional watermark is raised on it. Without it the body is a
+ * only the brim); each magnet sits in a cup from the void ceiling down to the
+ * bottom, flush with the brim, and an optional watermark is raised on the ceiling. Without it the body is a
  * solid plate with the magnet slots bored into the bottom face.
  */
 export function buildBody(outline: BodyOutline, slots: MagnetSlotSpec[] = [], hollow?: HollowSpec): BuildBodyResult {
@@ -52,7 +56,7 @@ export function buildBody(outline: BodyOutline, slots: MagnetSlotSpec[] = [], ho
     top = bottom;
   }
   const out = new SoupBuilder(256 + slots.length * 4 * 64);
-  const plan = hollow ? hollowPlan(hollow, bottom, zT, warnings) : null;
+  const plan = hollow ? hollowPlan(hollow, bottom, zT, slots, warnings) : null;
 
   // --- bottom cap (faces -z): with slot holes (solid) or as the brim annulus (hollow)
   const flat: number[] = [];
@@ -126,7 +130,7 @@ export function buildBody(outline: BodyOutline, slots: MagnetSlotSpec[] = [], ho
     for (const slot of slots) {
       const r = ringFor(slot, v, hollow!);
       if ('reason' in r) { warnings.push(r.reason); continue; }
-      addRing(out, slot.x, slot.y, r.ri, r.ro, d - hollow!.ringHeight, d + 0.1, slot.sides);
+      addMagnetCup(out, slot, r.ro, d);
       keepOut.push({ x: slot.x, y: slot.y, r: r.ro });
     }
     let watermark = false;
