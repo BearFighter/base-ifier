@@ -68,6 +68,10 @@ describe('nominalFromFilename', () => {
     expect(nominalFromFilename('S_Base_Round_60mm_35mm_1.stl')?.shape).toEqual({ kind: 'ellipse', w: 60, d: 35 });
     expect(nominalFromFilename('oval_105x70.stl')?.shape).toEqual({ kind: 'ellipse', w: 105, d: 70 });
     expect(nominalFromFilename('base 25x50.stl')?.shape).toEqual({ kind: 'rect', w: 50, d: 25 });
+    // two sizes and no shape word: a rectangle of both sizes, not a round of the first one
+    expect(nominalFromFilename('My_Scene_150mm_100mm.stl')?.shape).toEqual({ kind: 'rect', w: 150, d: 100 });
+    expect(nominalFromFilename('crater_oval_90mm_52mm.stl')?.shape).toEqual({ kind: 'ellipse', w: 90, d: 52 });
+    expect(nominalFromFilename('base_32mm.stl')?.shape).toEqual({ kind: 'ellipse', w: 32, d: 32 });
     expect(nominalFromFilename('whatever.stl')).toBeNull();
   });
 });

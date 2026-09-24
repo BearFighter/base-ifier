@@ -20,11 +20,10 @@
 import type { MagnetSlotSpec, Polygon2, Soup } from '../types';
 import { SoupBuilder } from '../types';
 import { earcutFull } from '../clip/earcutFull';
-import { insetConvex } from '../geom2d/offset';
-import { polygonArea, polygonBounds } from '../geom2d/polygon';
 import { slotCircle } from '../body/buildBody';
-import { placeWatermark, textPixels } from '../body/hollow';
-import type { KeepOutCircle, WatermarkPlacement } from '../body/hollow';
+import { textPixels } from '../body/hollow';
+import { insetConvex } from '../geom2d/offset';
+import { pointInConvexPolygon, polygonArea } from '../geom2d/polygon';
 import { addPrism } from '../pipeline/plug';
 import type { TrayCell } from './cells';
 import { TRAY_SEAM_EPS } from './cells';
@@ -152,11 +151,10 @@ export function buildTray(tray: Polygon2, cells: TrayCell[], spec: TraySpec): Tr
   let watermark = false;
   if (text && (spec.watermarkHeight ?? 0) > 0) {
     const markTop = Math.min(spec.markMaxZ ?? t + H, t + H);
-    // first choice is the outer wall, which is neither a seating face nor under a base;
-    // a round tray (no straight wall) or a short one falls back to hiding it in a slot
-    if (isAxisAlignedRect(tray)) watermark = addRimMark(out, text, tray, markTop);
-    if (!watermark) watermark = addFloorMark(out, text, spec, t, slots, warnings);
-    if (!watermark && warnings.every((w) => !/mark/.test(w))) warnings.push('There is no room for the maker mark on this tray, so it is left off.');
+    // only ever on the outer wall: nothing may stand on the floor inside a slot, or the base
+    // dropped into it would not sit flush
+    watermark = addWallMark(out, text, tray, markTop, spec.pockets ?? []);
+    if (!watermark) warnings.push('There is no stretch of outer wall on this tray tall and long enough for the maker mark, so it is left off.');
   }
 
   return { soup: out.build(), warnings, magnets: mode, magnetDepth, magnetFloorWanted, watermark };
@@ -213,141 +211,125 @@ function addHoleWall(out: SoupBuilder, circle: Polygon2, z0: number, z1: number)
   }
 }
 
-function isAxisAlignedRect(poly: Polygon2): boolean {
-  if (poly.length !== 4) return false;
-  for (let i = 0; i < 4; i++) {
-    const a = poly[i], b = poly[(i + 1) % 4];
-    if (Math.abs(a[0] - b[0]) > 1e-9 && Math.abs(a[1] - b[1]) > 1e-9) return false;
-  }
-  return true;
-}
-
 /**
- * The maker mark embossed on the tray's outer wall — the one place on a tray that
- * is neither a seating face nor under a base. Text runs along the wall's own
- * direction, which reads correctly from outside for every edge of a CCW outline,
- * and sinks into the wall by the whisker so the shells overlap.
+ * The maker mark embossed on the tray's outer wall: the one place on a tray that is
+ * neither a seating face nor inside a slot, so it can never lift a base. The text is
+ * centred on the longest straight wall when it fits there; otherwise (a round or oval
+ * tray) it follows the wall round the front, one run of pixels per wall segment. Every
+ * box stands TRAY_MARK_PROUD out of the wall and sinks TRAY_EMBED into it, and runs are
+ * grown by a whisker so neighbouring runs overlap instead of sharing corners.
  */
-function addRimMark(out: SoupBuilder, text: string, tray: Polygon2, wallTop: number): boolean {
+function addWallMark(out: SoupBuilder, text: string, tray: Polygon2, wallTop: number, pockets: Polygon2[]): boolean {
   const px = textPixels(text);
-  if (px.cols === 0) return false;
-  // longest wall
-  let best = -1, bestLen = 0;
+  if (px.cols === 0 || tray.length < 3) return false;
+  // outward normal = right of the edge direction for a CCW outline, left for a CW one
+  let area2 = 0;
+  for (let i = 0; i < tray.length; i++) {
+    const a = tray[i], b = tray[(i + 1) % tray.length];
+    area2 += a[0] * b[1] - b[0] * a[1];
+  }
+  const outSign = area2 >= 0 ? 1 : -1;
+  const segs: { ax: number; ay: number; ux: number; uy: number; s0: number; len: number }[] = [];
+  let perim = 0;
   for (let i = 0; i < tray.length; i++) {
     const a = tray[i], b = tray[(i + 1) % tray.length];
     const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    if (len > bestLen) { bestLen = len; best = i; }
+    if (len < 1e-9) continue;
+    segs.push({ ax: a[0], ay: a[1], ux: (b[0] - a[0]) / len, uy: (b[1] - a[1]) / len, s0: perim, len });
+    perim += len;
   }
-  if (best < 0) return false;
-  const a = tray[best], b = tray[(best + 1) % tray.length];
-  const len = bestLen;
-  const ux = (b[0] - a[0]) / len, uy = (b[1] - a[1]) / len;
-  const nx = uy, ny = -ux; // outward normal of a CCW edge
-  const availLen = len - 1.0;
+  if (segs.length < 3) return false;
+  const wrap = (v: number) => ((v % perim) + perim) % perim;
+  const segAt = (arc: number) => {
+    let lo = 0, hi = segs.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (segs[mid].s0 <= arc) lo = mid; else hi = mid - 1;
+    }
+    return lo;
+  };
+  // the wall must be backed by the surround along the whole text: a slot that opens at the
+  // edge of the tray leaves no wall there, and the mark would stand in the slot
+  const clear = (from: number, to: number) => {
+    for (let arc = from; arc <= to + 1e-9; arc += 0.25) {
+      const sg = segs[segAt(wrap(arc))];
+      const u = wrap(arc) - sg.s0;
+      const x = sg.ax + sg.ux * u - outSign * sg.uy * 0.4, y = sg.ay + sg.uy * u + outSign * sg.ux * 0.4;
+      for (const p of pockets) if (pointInConvexPolygon(p, x, y)) return false;
+    }
+    return true;
+  };
   const availH = wallTop - 0.4;
-  const size = Math.min(0.5, availLen / px.cols, availH / px.rows);
+  let size = 0, centre = 0;
+  // first choice: a straight wall the whole text fits on, longest first
+  const byLength = segs.map((_, i) => i).sort((i, j) => segs[j].len - segs[i].len);
+  for (const i of byLength) {
+    const sz = Math.min(0.5, (segs[i].len - 1.0) / px.cols, availH / px.rows);
+    if (sz < TRAY_MARK_MIN_PX) break;
+    const c = segs[i].s0 + segs[i].len / 2;
+    const half = (px.cols * Math.floor(sz * 100)) / 200;
+    if (clear(c - half, c + half)) { size = sz; centre = c; break; }
+  }
+  if (size === 0) {
+    // no straight wall will do (a round or oval tray): follow the wall, front first, over at most 40% of the way round
+    const sz = Math.min(0.5, (perim * 0.4) / px.cols, availH / px.rows);
+    if (sz >= TRAY_MARK_MIN_PX) {
+      const half = (px.cols * Math.floor(sz * 100)) / 200;
+      const order = segs.map((_, i) => i).sort((i, j) => (segs[i].ay + (segs[i].uy * segs[i].len) / 2) - (segs[j].ay + (segs[j].uy * segs[j].len) / 2));
+      for (const i of order) {
+        const c = segs[i].s0 + segs[i].len / 2;
+        if (clear(c - half, c + half)) { size = sz; centre = c; break; }
+      }
+    }
+  }
   if (size < TRAY_MARK_MIN_PX) return false;
-  const s = Math.round(size * 100) / 100;
-  const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+  const s = Math.floor(size * 100) / 100;
+  if (s < TRAY_MARK_MIN_PX) return false;
+  const start = centre - (px.cols * s) / 2;
+  const g = s * 0.08;
   const zc = wallTop / 2;
-  const wallLo = -TRAY_MARK_PROUD, wallHi = TRAY_EMBED; // along the outward normal
   for (let row = 0; row < px.rows; row++) {
+    const z0 = zc + (px.rows * s) / 2 - (row + 1) * s - g, z1 = zc + (px.rows * s) / 2 - row * s + g;
     let col = 0;
     while (col < px.cols) {
       if (!px.on(row, col)) { col++; continue; }
+      const arc0 = wrap(start + (col + 0.5) * s);
+      const k = segAt(arc0);
       let end = col;
-      while (end + 1 < px.cols && px.on(row, end + 1)) end++;
-      // grow each run by a whisker so runs on neighbouring rows overlap instead of touching
-      const g = s * 0.08;
-      const u0 = -((px.cols * s) / 2) + col * s - g, u1 = -((px.cols * s) / 2) + (end + 1) * s + g;
-      const z0 = zc + (px.rows * s) / 2 - (row + 1) * s - g, z1 = zc + (px.rows * s) / 2 - row * s + g;
-      const p0x = mx + ux * u0 + nx * wallLo, p0y = my + uy * u0 + ny * wallLo;
-      const p1x = mx + ux * u1 + nx * wallHi, p1y = my + uy * u1 + ny * wallHi;
-      addBoxSorted(out, p0x, p0y, z0, p1x, p1y, z1);
+      while (end + 1 < px.cols && px.on(row, end + 1) && segAt(wrap(start + (end + 1.5) * s)) === k) end++;
+      const sg = segs[k];
+      const u0 = arc0 - sg.s0 - s / 2 - g;
+      const u1 = u0 + (end - col + 1) * s + 2 * g;
+      // local frame: along the wall, INTO the wall, up; right-handed, so the box keeps its winding
+      const ix = -outSign * sg.uy, iy = outSign * sg.ux;
+      addOrientedBox(out, sg.ax, sg.ay, sg.ux, sg.uy, ix, iy, u0, u1, -TRAY_MARK_PROUD, TRAY_EMBED, z0, z1);
       col = end + 1;
     }
   }
   return true;
 }
 
-/** A closed axis-aligned box given any two opposite corners. */
-function addBoxSorted(out: SoupBuilder, ax: number, ay: number, az: number, bx: number, by: number, bz: number): void {
-  const x0 = Math.min(ax, bx), x1 = Math.max(ax, bx);
-  const y0 = Math.min(ay, by), y1 = Math.max(ay, by);
-  const z0 = Math.min(az, bz), z1 = Math.max(az, bz);
-  if (x1 - x0 < 1e-9 || y1 - y0 < 1e-9 || z1 - z0 < 1e-9) return;
-  out.tri(x0, y0, z0, x1, y1, z0, x1, y0, z0);
-  out.tri(x0, y0, z0, x0, y1, z0, x1, y1, z0);
-  out.tri(x0, y0, z1, x1, y0, z1, x1, y1, z1);
-  out.tri(x0, y0, z1, x1, y1, z1, x0, y1, z1);
-  out.tri(x0, y0, z0, x1, y0, z0, x1, y0, z1);
-  out.tri(x0, y0, z0, x1, y0, z1, x0, y0, z1);
-  out.tri(x1, y0, z0, x1, y1, z0, x1, y1, z1);
-  out.tri(x1, y0, z0, x1, y1, z1, x1, y0, z1);
-  out.tri(x1, y1, z0, x0, y1, z0, x0, y1, z1);
-  out.tri(x1, y1, z0, x0, y1, z1, x1, y1, z1);
-  out.tri(x0, y1, z0, x0, y0, z0, x0, y0, z1);
-  out.tri(x0, y1, z0, x0, y0, z1, x0, y1, z1);
+/**
+ * A closed box in a frame standing on the XY plane: `e1` along x', `e2` along y', z up.
+ * (e1, e2, z) must be right-handed for the triangles to face outward.
+ */
+function addOrientedBox(out: SoupBuilder, ox: number, oy: number, e1x: number, e1y: number, e2x: number, e2y: number, u0: number, u1: number, v0: number, v1: number, z0: number, z1: number): void {
+  if (u1 - u0 < 1e-9 || v1 - v0 < 1e-9 || z1 - z0 < 1e-9) return;
+  const P = (u: number, v: number): [number, number] => [ox + e1x * u + e2x * v, oy + e1y * u + e2y * v];
+  const [ax, ay] = P(u0, v0), [bx, by] = P(u1, v0), [cx, cy] = P(u1, v1), [dx, dy] = P(u0, v1);
+  // bottom (down), top (up)
+  out.tri(ax, ay, z0, cx, cy, z0, bx, by, z0);
+  out.tri(ax, ay, z0, dx, dy, z0, cx, cy, z0);
+  out.tri(ax, ay, z1, bx, by, z1, cx, cy, z1);
+  out.tri(ax, ay, z1, cx, cy, z1, dx, dy, z1);
+  // the four sides: a-b, b-c, c-d, d-a (counter-clockwise seen from above)
+  const side = (px: number, py: number, qx: number, qy: number) => {
+    out.tri(px, py, z0, qx, qy, z0, qx, qy, z1);
+    out.tri(px, py, z0, qx, qy, z1, px, py, z1);
+  };
+  side(ax, ay, bx, by);
+  side(bx, by, cx, cy);
+  side(cx, cy, dx, dy);
+  side(dx, dy, ax, ay);
 }
 
-/**
- * A round or oval tray has no wall an axis-aligned box can follow, so the mark
- * goes on the floor inside the largest opening, shallower than the void under
- * the base that sits there: completely hidden, and it cannot lift the base.
- */
-function addFloorMark(out: SoupBuilder, text: string, spec: TraySpec, t: number, slots: MagnetSlotSpec[], warnings: string[]): boolean {
-  const u = spec.underside;
-  const pockets = spec.pockets ?? [];
-  if (!u || pockets.length === 0) {
-    warnings.push('The maker mark needs either a straight rim or a hollow base above it, so it is left off this tray.');
-    return false;
-  }
-  let biggest: Polygon2 | null = null, bestArea = 0;
-  for (const p of pockets) {
-    const area = polygonArea(p);
-    if (area > bestArea) { bestArea = area; biggest = p; }
-  }
-  if (!biggest) return false;
-  // the floor under the base's void, kept clear of its brim
-  const safe = insetConvex(biggest, (spec.gap ?? 0) + u.rim + 0.3);
-  if (safe.length < 3 || polygonArea(safe) < 20) {
-    warnings.push('The slots are too small to hide the maker mark under a base, so it is left off this tray.');
-    return false;
-  }
-  const b = polygonBounds(safe);
-  const keepOut: KeepOutCircle[] = slots
-    .filter((s) => s.x >= b.min[0] - 5 && s.x <= b.max[0] + 5 && s.y >= b.min[1] - 5 && s.y <= b.max[1] + 5)
-    .map((s) => ({ x: s.x, y: s.y, r: s.radius + u.ringWidth }));
-  const place = placeWatermark(safe, text, keepOut);
-  if (!place) {
-    warnings.push('There is no room to hide the maker mark under a base on this tray, so it is left off.');
-    return false;
-  }
-  const height = Math.min(spec.watermarkHeight ?? 0.2, 0.2, Math.max(0.1, u.depth - 0.3));
-  // raised out of the floor's top face, sunk into it by the whisker so the shells overlap
-  addFlatMark(out, text, place, t - TRAY_EMBED, t + height);
-  return true;
-}
-
-/**
- * Raised text lying in the XY plane, one box per run of pixels, reading the right
- * way round when you look down at it (the base above it lifts out).
- */
-function addFlatMark(out: SoupBuilder, text: string, place: WatermarkPlacement, z0: number, z1: number): void {
-  const px = textPixels(text);
-  const { px: s, centre, vertical } = place;
-  for (let row = 0; row < px.rows; row++) {
-    let col = 0;
-    while (col < px.cols) {
-      if (!px.on(row, col)) { col++; continue; }
-      let end = col;
-      while (end + 1 < px.cols && px.on(row, end + 1)) end++;
-      const g = s * 0.08;
-      const u0 = -((px.cols * s) / 2) + col * s - g, u1 = -((px.cols * s) / 2) + (end + 1) * s + g;
-      const v0 = (px.rows * s) / 2 - (row + 1) * s - g, v1 = (px.rows * s) / 2 - row * s + g;
-      if (!vertical) addBoxSorted(out, centre[0] + u0, centre[1] + v0, z0, centre[0] + u1, centre[1] + v1, z1);
-      else addBoxSorted(out, centre[0] + v0, centre[1] + u0, z0, centre[0] + v1, centre[1] + u1, z1);
-      col = end + 1;
-    }
-  }
-}

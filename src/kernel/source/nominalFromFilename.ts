@@ -9,7 +9,8 @@ export interface NominalGuess {
 /**
  * Parse a nominal base size out of a file name.
  * Handles OPR names like "S_Base_Square_150mm_100mm_1.stl", "S_Base_Round_60mm_35mm_1.stl",
- * and generic names like "base_32mm.stl", "25x50.stl", "oval_105x70.stl", "round-40.stl".
+ * and generic names like "base_32mm.stl", "25x50.stl", "oval_105x70.stl", "round-40.stl",
+ * "My_Scene_150mm_100mm.stl" (two sizes, no shape word: a rectangle).
  */
 export function nominalFromFilename(name: string): NominalGuess | null {
   const base = name.replace(/\.[^.]+$/, '');
@@ -27,6 +28,13 @@ export function nominalFromFilename(name: string): NominalGuess | null {
   }
   // "AxB" style
   m = /(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/i.exec(base);
+  if (m) {
+    const a = parseFloat(m[1]), b = parseFloat(m[2]);
+    const kind = isRound ? 'ellipse' : 'rect';
+    return { shape: { kind, w: Math.max(a, b), d: Math.min(a, b) }, matched: m[0] };
+  }
+  // two sizes with mm and no shape word, e.g. "My_Scene_150mm_100mm": a rectangle unless the name says round
+  m = /(\d+(?:\.\d+)?)\s*mm[_\- ]*(\d+(?:\.\d+)?)\s*mm/i.exec(base);
   if (m) {
     const a = parseFloat(m[1]), b = parseFloat(m[2]);
     const kind = isRound ? 'ellipse' : 'rect';

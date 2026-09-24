@@ -254,6 +254,8 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   let trayCells: TrayCell[] = [];
   let trayThinSpan = { w: 0, d: 0 };
   let trayCarveFloor: number | null = null;
+  /** object scenes: the least material the scene stands on the floor anywhere over the tray, mm */
+  let trayMaterialAbove = 0;
   if (trayParams) {
     if (clearance > 0) warnings.push('A tray is always made at its true size, so “slightly smaller for trays” is ignored for it.');
     if (trayParams.pockets.length === 0) warnings.push('There are no bases in this frame yet, so the tray has nothing to hold.');
@@ -276,6 +278,7 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
       trayCarveFloor = 0.05;
       const mt = materialThickness(source.sculpt, source.bins, bottomS, 0);
       if (mt.stats && !mt.flatBottom) warnings.push('The scene is not flat underneath here, so expect small gaps where the tray meets it.');
+      if (mt.stats && mt.stats.misses === 0) trayMaterialAbove = Math.max(0, mt.thickness - trayCarveFloor);
       if (mt.stats && mt.thickness < trayParams.plateHeight) warnings.push(`The scene is only ${mt.thickness.toFixed(1)} mm thick over this tray, so its surround is lower than the bases in places.`);
     }
   }
@@ -341,7 +344,7 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     frame.sculptPoly = source.outline.bottom;
   } else if (trayParams && trayCarveFloor !== null) {
     // an object scene: only the floor is invented, the surround is the scene's own material
-    plateTopSource = trayParams.floor;
+    plateTopSource = trayFloor;
     frame.outline = { bottom: bottomS, top: topS, plateTop: plateTopSource };
   } else if (objectMode && !isRoot && plateTopSource < 1) {
     // a plate under a thin object: give it a real height
@@ -351,7 +354,7 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   // sculpt sits on the plate: shift it if this base's plate is a different height from the file's;
   // a carved base is shifted so its floor becomes z = 0
   const zShift = trayParams && trayCarveFloor !== null
-    ? trayParams.floor - trayCarveFloor
+    ? trayFloor - trayCarveFloor
     : slice ? slice.lift - slice.floorZ : carvedInfo ? -carvedInfo.floorZ : plateTopSource - source.outline.plateTop;
   timings.outline = now() - t0; t0 = now();
 
@@ -397,8 +400,8 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
       underside: trayParams.underside,
       pockets: pocketsL,
       gap: trayParams.gap,
-      // in an object scene there is no analytic surround to emboss, so the mark stays in the floor band
-      markMaxZ: trayCarveFloor !== null ? trayFloor * scale : undefined,
+      // in an object scene the outer wall is the floor band plus the scene's own material standing on it
+      markMaxZ: trayCarveFloor !== null ? (trayFloor + trayMaterialAbove) * scale : undefined,
     });
     warnings.push(...res.warnings);
     body = res.soup;
