@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chainFor, magnetRequestFor, sizingRequestFor, trayRequestFor, traySettingsFor } from '@/state/chain';
+import { chainFor, magnetRequestFor, sizingRequestFor, trayRequestFor, traySettingsFor, undersideRequestFor } from '@/state/chain';
 import { trayPiecesFor, trayShapeFor } from '@/state/derive';
 import { placementError, usesFrames } from '@/model/rules';
 import { formatMm } from '@/ui/util/format';
@@ -287,6 +287,22 @@ describe('state/chain: trayRequestFor', () => {
     p.pieces.b2.xy = [0, 0];
     const after = chainFor(p, 'tr1');
     expect(JSON.stringify(before)).not.toBe(JSON.stringify(after));
+  });
+});
+
+describe('the maker mark is not a setting', () => {
+  it('never travels to the geometry worker, even from an old project file that stored one', () => {
+    const p = trayProject();
+    // an old or edited project file that tries to blank the mark
+    (p.underside as unknown as Record<string, unknown>).watermark = '';
+    (p.underside as unknown as Record<string, unknown>).watermarkHeight = 0;
+    const u = undersideRequestFor(p)!;
+    expect(u).toBeDefined();
+    expect('watermark' in u).toBe(false);
+    expect('watermarkHeight' in u).toBe(false);
+    const t = trayRequestFor(p, p.pieces.tr1)! as unknown as Record<string, unknown>;
+    expect('watermark' in t).toBe(false);
+    expect('watermarkHeight' in t).toBe(false);
   });
 });
 

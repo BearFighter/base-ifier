@@ -61,10 +61,7 @@ export interface TrayRequest {
   magnets?: { at: Vec2[]; sizing: MagnetRequest['sizing']; floorMin: number };
   /** the bases in the frame do not all have the same plate height, so they cannot all sit level */
   mixedHeights?: boolean;
-  /** raised maker mark; empty = none */
-  watermark: string;
-  watermarkHeight: number;
-  /** the bases' hollow underside, so the mark can hide under one of them on a round tray */
+  /** the bases' hollow underside */
   underside?: { depth: number; rim: number; ringWidth: number };
 }
 
@@ -118,14 +115,12 @@ export interface SizingRequest {
   clearance?: number;
 }
 
-/** Hollow underside: brim, void, magnet locating rings, watermark. Omitted = solid plate. */
+/** Hollow underside: brim, void, magnet cups. Omitted = solid plate. The maker mark is added by the worker, never requested. */
 export interface UndersideRequest {
   depth: number;
   rim: number;
   ringHeight: number;
   ringWidth: number;
-  watermark: string;
-  watermarkHeight: number;
 }
 
 export interface ComputeRequest {

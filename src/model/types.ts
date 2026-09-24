@@ -182,8 +182,6 @@ export interface UndersideSettings {
   ringHeight: number;
   ringWidth: number;
   /** raised text on the void ceiling; empty = none */
-  watermark: string;
-  watermarkHeight: number;
 }
 
 export interface Project {

@@ -102,9 +102,9 @@ export function suggestedTrayFloor(spanMm: number, current: number): number | nu
   return want > current + 1e-9 ? want : null;
 }
 
-/** Hollow underside: 2 mm void inside a 2 mm brim, magnet rings, raised watermark. */
+/** Hollow underside: 2 mm void inside a 2 mm brim, a cup per magnet. The maker mark is not a setting. */
 export function defaultUndersideSettings(): UndersideSettings {
-  return { hollow: true, voidDepth: 2, rimWidth: 2, ringHeight: 0.5, ringWidth: 0.4, watermark: 'BITDEATHLABS', watermarkHeight: 0.3 };
+  return { hollow: true, voidDepth: 2, rimWidth: 2, ringHeight: 0.5, ringWidth: 0.4 };
 }
 
 /** Named edge profiles offered in the UI. */

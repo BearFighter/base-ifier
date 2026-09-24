@@ -26,7 +26,17 @@ export interface HollowSpec {
   watermarkHeight: number;
 }
 
-export const DEFAULT_HOLLOW: HollowSpec = { depth: 2, rim: 2, ringHeight: 0.5, ringWidth: 0.4, watermark: 'BITDEATHLABS', watermarkHeight: 0.3 };
+/**
+ * The maker mark every base and tray made with the free version carries. It is part of
+ * the app, not a setting: the worker stamps it on whatever it is asked to build, so no
+ * setting and no edited project file can change or remove it. Only a future commercial
+ * (watermark-free) export may leave it off.
+ */
+export const MAKER_MARK = 'BITDEATHLABS';
+/** How far the mark stands out, mm. */
+export const MAKER_MARK_HEIGHT = 0.3;
+
+export const DEFAULT_HOLLOW: HollowSpec = { depth: 2, rim: 2, ringHeight: 0.5, ringWidth: 0.4, watermark: MAKER_MARK, watermarkHeight: MAKER_MARK_HEIGHT };
 
 /** How much material the ceiling always keeps above the void, mm. */
 export const MIN_CEILING = 0.8;

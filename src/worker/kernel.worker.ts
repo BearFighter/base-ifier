@@ -1,5 +1,7 @@
 /// <reference lib="webworker" />
 import * as Comlink from 'comlink';
+import { MAKER_MARK, MAKER_MARK_HEIGHT } from '../kernel/body/hollow';
+import type { HollowSpec } from '../kernel/body/hollow';
 import { bakeStudio as bakeStudioScene, buildGround, groundClip, heightCapWarnings, placeProp, previewCell, scatterScene } from '../kernel/studio/bake';
 import type { PropSource } from '../kernel/studio/bake';
 import { heightfieldToSlab } from '../kernel/terrain/mesh';
@@ -99,8 +101,8 @@ function resolveTray(frame: ParentFrame, req: TrayRequest): TrayParams {
     magnetFloorMin: req.magnets?.floorMin,
     gap: req.gap,
     minWall: TRAY_MIN_WALL,
-    watermark: req.watermark,
-    watermarkHeight: req.watermarkHeight,
+    watermark: MAKER_MARK,
+    watermarkHeight: MAKER_MARK_HEIGHT,
     underside: req.underside,
     mixedHeights: req.mixedHeights,
   };
@@ -153,7 +155,7 @@ function compute(req: ComputeRequest): PieceResult {
     clearance: req.sizing?.clearance ?? 0,
     skipSculpt: req.skipSculpt,
     stamp: entry.stamp,
-    hollow: req.underside,
+    hollow: withMakerMark(req.underside),
   });
   if (fullKey) {
     entry.full.set(fullKey, result);
@@ -215,6 +217,11 @@ function previewProp(prop: Prop): Prop {
   const cell = Math.max(0.05, size / 150);
   const simplified = meshToSoup(decimateSoup(prop.soup, cell).mesh);
   return { ...prop, soup: simplified };
+}
+
+/** The hollow underside to build, always with the maker mark (never taken from the request). */
+function withMakerMark(u: ComputeRequest['underside']): HollowSpec | undefined {
+  return u ? { depth: u.depth, rim: u.rim, ringHeight: u.ringHeight, ringWidth: u.ringWidth, watermark: MAKER_MARK, watermarkHeight: MAKER_MARK_HEIGHT } : undefined;
 }
 
 const api: KernelApi = {

@@ -9,7 +9,7 @@ import { Hint } from '@/ui/common/Hint';
 import { magnetPresetLabel } from '@/ui/common/copy';
 import { formatMm } from '@/ui/util/format';
 
-/** Hollow-or-solid underside, brim, magnet rings and the watermark (project-wide). */
+/** Hollow-or-solid underside, brim and magnet cups (project-wide). The maker mark is not a setting. */
 function UndersideSection() {
   const u = useAppStore((s) => s.project.underside);
   const magnet = useAppStore((s) => s.project.magnet);
@@ -34,15 +34,10 @@ function UndersideSection() {
           <Field label="Brim width" unit="mm" help="The solid ring around the edge that the base stands on. 2 mm is sturdy; supports for tilted printing land on it.">
             <input type="number" step={0.25} min={1} value={u.rimWidth} onChange={(e) => setUnderside({ rimWidth: Number(e.target.value) })} />
           </Field>
-          <Field label="Watermark" help="Raised text on the ceiling of the void, mirrored so it reads from below. Skipped automatically when a base is too small for it. Leave empty for none.">
-            <input type="text" maxLength={24} value={u.watermark} onChange={(e) => setUnderside({ watermark: e.target.value })} />
-          </Field>
-          <Details summary="Magnet cup and watermark sizes">
+          <Hint>Every hollow base carries a small BITDEATHLABS mark on the ceiling of its void, mirrored so it reads from below. It shows the base was made with the free version of Base-ifier and cannot be changed.</Hint>
+          <Details summary="Magnet cup size">
             <Field label="Magnet cup wall" unit="mm" help="How thick the wall of the cup around each magnet is. The cup runs from the ceiling of the void to the bottom of the base, so the magnet is held along its whole height with its face flush with the bottom.">
               <input type="number" step={0.1} min={0.2} value={u.ringWidth} onChange={(e) => setUnderside({ ringWidth: Number(e.target.value) })} />
-            </Field>
-            <Field label="Watermark height" unit="mm">
-              <input type="number" step={0.05} min={0.1} value={u.watermarkHeight} onChange={(e) => setUnderside({ watermarkHeight: Number(e.target.value) })} />
             </Field>
           </Details>
         </>

@@ -79,8 +79,6 @@ export function trayRequestFor(project: Project, piece: Piece): TrayRequest | un
     slots,
     magnets: at.length ? { at, sizing: { dia: m.dia, thick: m.thick, radialTol: m.radialTol, depthTol: m.depthTol, sides: m.sides }, floorMin: m.floorMin } : undefined,
     mixedHeights: heights.size > 1,
-    watermark: u?.watermark ?? '',
-    watermarkHeight: u?.watermarkHeight ?? 0.3,
     underside: u?.hollow ? { depth: u.voidDepth, rim: u.rimWidth, ringWidth: u.ringWidth } : undefined,
   };
 }
@@ -136,7 +134,7 @@ export function magnetRequestFor(
 export function undersideRequestFor(project: Project): UndersideRequest | undefined {
   const u = project.underside;
   if (!u || !u.hollow) return undefined;
-  return { depth: u.voidDepth, rim: u.rimWidth, ringHeight: u.ringHeight, ringWidth: u.ringWidth, watermark: u.watermark ?? '', watermarkHeight: u.watermarkHeight };
+  return { depth: u.voidDepth, rim: u.rimWidth, ringHeight: u.ringHeight, ringWidth: u.ringWidth };
 }
 
 /** Print-ready export request, or undefined when exports stay plain. */

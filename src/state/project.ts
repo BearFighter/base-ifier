@@ -13,7 +13,7 @@ import { immer } from 'zustand/middleware/immer';
 import { defaultEdges, newId, newProject, defaultExportSettings, defaultUndersideSettings, defaultPlugSettings, defaultTraySettings } from '@/model/defaults';
 import { placementError } from '@/model/rules';
 import { descendants, leaves, pieceSize } from '@/model/tree';
-import type { MagnetSlot, Piece, Project, Source, SourceNormalization, SourceStats, PieceRole } from '@/model/types';
+import type { MagnetSlot, Piece, Project, Source, SourceNormalization, SourceStats, PieceRole, UndersideSettings } from '@/model/types';
 import { downloadBlob } from '@/ui/util/download';
 import { formatMm } from '@/ui/util/format';
 import type { ComputeRequest, ExportItem } from '@/worker/api';
@@ -49,6 +49,13 @@ function normalizeStudioLibrary(studio: Record<string, StudioDocument> | undefin
 /** In-flight compute promise per piece id, so a second request for the same
  * piece waits for the first instead of firing a duplicate worker call. */
 const inFlight = new Map<string, Promise<void>>();
+
+/** Older project files stored a watermark text and height; they are not settings any more. */
+function withoutMark(u: UndersideSettings & { watermark?: unknown; watermarkHeight?: unknown }): UndersideSettings {
+  const { watermark: _w, watermarkHeight: _h, ...rest } = u;
+  void _w; void _h;
+  return rest;
+}
 
 export const useAppStore = create<AppStore>()(
   immer((set, get) => {
@@ -775,7 +782,7 @@ export const useAppStore = create<AppStore>()(
         }
         const prevSources = get().sources;
         set((s) => {
-          s.project = { ...project, export: { ...defaultExportSettings(), ...project.export, presupport: { ...defaultExportSettings().presupport, ...(project.export?.presupport ?? {}) } }, underside: { ...defaultUndersideSettings(), ...(project.underside ?? {}) }, plug: { ...defaultPlugSettings(), ...(project.plug ?? {}) }, tray: { ...defaultTraySettings(), ...(project.tray ?? {}) }, studio: normalizeStudioLibrary(project.studio) };
+          s.project = { ...project, export: { ...defaultExportSettings(), ...project.export, presupport: { ...defaultExportSettings().presupport, ...(project.export?.presupport ?? {}) } }, underside: withoutMark({ ...defaultUndersideSettings(), ...(project.underside ?? {}) }), plug: { ...defaultPlugSettings(), ...(project.plug ?? {}) }, tray: { ...defaultTraySettings(), ...(project.tray ?? {}) }, studio: normalizeStudioLibrary(project.studio) };
           s.geometry = {};
           s.view = { mode: 'top', showSculpt: true, tool: 'layout', drafts: [], activeDraftId: null, showHelp: s.view.showHelp, confirmDelete: null, confirmRemoveSource: null, leftTab: 'bases' };
           if (!s.project.mode) s.project.mode = 'multibase';

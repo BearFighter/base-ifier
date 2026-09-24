@@ -100,7 +100,9 @@ describe('model/defaults', () => {
   });
 
   it('defaultUndersideSettings is a hollow 2 mm void in a 2 mm brim with the watermark', () => {
-    expect(defaultUndersideSettings()).toEqual({ hollow: true, voidDepth: 2, rimWidth: 2, ringHeight: 0.5, ringWidth: 0.4, watermark: 'BITDEATHLABS', watermarkHeight: 0.3 });
+    expect(defaultUndersideSettings()).toEqual({ hollow: true, voidDepth: 2, rimWidth: 2, ringHeight: 0.5, ringWidth: 0.4 });
+    // the maker mark is not a setting at all
+    expect('watermark' in defaultUndersideSettings()).toBe(false);
     expect(newProject().underside).toEqual(defaultUndersideSettings());
     expect(defaultPlugSettings()).toEqual({ depth: 4, clearance: 0.2 });
     expect(newProject().plug).toEqual(defaultPlugSettings());
