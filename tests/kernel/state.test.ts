@@ -206,10 +206,13 @@ describe('model/rules: placementError', () => {
   const onRoot = { parentIsRoot: true, parentRole: 'base' as const, siblingCount: 0 };
   const inFrame = { parentIsRoot: false, parentRole: 'frame' as const, siblingCount: 0 };
 
-  it('movement tray mode wants a frame first, then bases inside it', () => {
+  it('movement tray mode takes a frame with bases inside it, or bases straight on the scene, never both', () => {
     expect(placementError('tray', 'frame', onRoot)).toBeNull();
     expect(placementError('tray', 'base', inFrame)).toBeNull();
-    expect(placementError('tray', 'base', onRoot)).toMatch(/place a unit frame first/i);
+    // no frame: bases go straight on the scene and the whole scene becomes the tray
+    expect(placementError('tray', 'base', { ...onRoot, rootFrames: 0 })).toBeNull();
+    expect(placementError('tray', 'base', { ...onRoot, rootFrames: 1 })).toMatch(/has a unit frame/i);
+    expect(placementError('tray', 'frame', { ...onRoot, rootBases: 2 })).toMatch(/whole scene is the tray/i);
     expect(placementError('tray', 'tray', onRoot)).toMatch(/made for you/i);
   });
 
@@ -303,6 +306,59 @@ describe('the maker mark is not a setting', () => {
     const t = trayRequestFor(p, p.pieces.tr1)! as unknown as Record<string, unknown>;
     expect('watermark' in t).toBe(false);
     expect('watermarkHeight' in t).toBe(false);
+  });
+});
+
+/** A scene with no frame: two bases straight on it (movement tray mode makes the whole scene the tray). */
+function wholeSceneProject(objectScene = false): Project {
+  const root = makePiece({ id: 'root1', parentId: null, name: 'Ruins', shape: { kind: 'rect', w: 150, d: 100 } });
+  const b1 = makePiece({ id: 'b1', parentId: 'root1', xy: [-40, 10], shape: { kind: 'ellipse', w: 32, d: 32 }, profile: { kind: 'original' } });
+  const b2 = makePiece({ id: 'b2', parentId: 'root1', xy: [30, -20], shape: { kind: 'ellipse', w: 32, d: 32 }, profile: { kind: 'original' } });
+  let p = newProject('Whole scene');
+  p = { ...p, mode: 'tray' };
+  for (const piece of [root, b1, b2]) p = addPiece(p, piece);
+  p.sources.src1 = { id: 'src1', name: 'ruins.stl', fileKey: { hash: 'x', size: 1 }, nominal: { kind: 'rect', w: 150, d: 100 }, normalization: { mode: objectScene ? 'generic' : 'twoShell', plateTop: objectScene ? 0 : 2.984, topScale: [1, 1], sculptMargin: 0.1, measuredScale: 1 }, stats: { tris: 1, components: 1, nonManifoldEdges: 0, boundaryEdges: 0, bounds: { min: [0, 0, 0], max: [1, 1, 1] } }, rootPieceId: 'root1' };
+  return p;
+}
+
+describe('movement tray without a frame: the whole scene is the tray', () => {
+  it('makes one tray the size of the scene, with no rim, when no frame is placed', () => {
+    const p = wholeSceneProject();
+    const trays = trayPiecesFor(p, 'root1');
+    expect(trays.length).toBe(1);
+    const t = trays[0];
+    expect(t.name).toBe('Ruins tray');
+    expect(t.trayOf).toBe('root1');
+    expect(t.parentId).toBe('root1');
+    expect(t.xy).toEqual([0, 0]);
+    expect(t.shape).toEqual({ kind: 'rect', w: 150, d: 100 });
+    expect(trayShapeFor(p, p.pieces.root1)).toEqual({ kind: 'rect', w: 150, d: 100 });
+  });
+
+  it('puts a slot under every base on the scene and says the tray is the whole scene', () => {
+    const p = wholeSceneProject();
+    const t = { ...trayPiecesFor(p, 'root1')[0] };
+    p.pieces[t.id] = t;
+    const req = trayRequestFor(p, t)!;
+    expect(req.wholeScene).toBe(true);
+    expect(req.slots.map((sl) => sl.xy)).toEqual([[-40, 10], [30, -20]]);
+    expect(req.plateHeight).toBeCloseTo(2.984, 6);
+  });
+
+  it('gives bases on a single-shell scene a real plate height, never 0', () => {
+    // the scene has no plate of its own; 0 made the tray refuse to build ("must both have a height")
+    const p = wholeSceneProject(true);
+    const t = { ...trayPiecesFor(p, 'root1')[0] };
+    p.pieces[t.id] = t;
+    expect(trayRequestFor(p, t)!.plateHeight).toBe(3);
+  });
+
+  it('frames still make their own trays', () => {
+    const p = trayProject();
+    delete p.pieces.tr1;
+    p.pieces.root1.children = p.pieces.root1.children.filter((c) => c !== 'tr1');
+    expect(trayPiecesFor(p, 'root1').map((t) => t.trayOf)).toEqual(['fr1']);
+    expect(trayRequestFor(p, p.pieces.fr1)).toBeUndefined();
   });
 });
 

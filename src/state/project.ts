@@ -359,7 +359,14 @@ export const useAppStore = create<AppStore>()(
         const parentIsRoot = parent.parentId === null;
         // a tray is not a sibling of the bases it holds: it must not count against "one base only"
         const siblingCount = parent.children.filter((cid) => state.project.pieces[cid]?.role !== 'tray').length;
-        const problem = placementError(state.project.mode, role, { parentIsRoot, parentRole: parent.role ?? 'base', siblingCount });
+        const onRoot = parentIsRoot ? parent.children.map((cid) => state.project.pieces[cid]).filter(Boolean) : [];
+        const problem = placementError(state.project.mode, role, {
+          parentIsRoot,
+          parentRole: parent.role ?? 'base',
+          siblingCount,
+          rootFrames: onRoot.filter((c) => c!.role === 'frame').length,
+          rootBases: onRoot.filter((c) => (c!.role ?? 'base') === 'base').length,
+        });
         if (problem) { set((s) => { s.lastError = problem; }); return null; }
         const id = newId('pc');
         const base: Piece = {
@@ -417,7 +424,7 @@ export const useAppStore = create<AppStore>()(
           const root = get().project.pieces[src.rootPieceId];
           if (!root) continue;
           if (get().project.mode === 'tray') {
-            // one movement tray per frame, regenerated from scratch so it always matches the layout
+            // one movement tray per frame (or one for the whole scene when there is no frame), regenerated from scratch so it always matches the layout
             for (const cid of root.children.slice()) {
               if (get().project.pieces[cid]?.role === 'tray') get().removePiece(cid);
             }

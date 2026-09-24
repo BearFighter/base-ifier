@@ -52,6 +52,10 @@ export function AddBar() {
   // the frame that bases go into (multibase): the selected frame, or the frame of the selected base
   const frameBox: BaseBox | undefined =
     selBox.piece.role === 'frame' ? selBox : selBox.depth === 2 && selBox.piece.parentId ? B.boxes.find((b) => b.id === selBox.piece.parentId) : undefined;
+  // movement tray mode without any frame: bases go straight on the scene, and the whole scene is the tray
+  const baseTarget: BaseBox | undefined = frameBox ?? (mode === 'tray' && !B.boxes.some((b) => b.piece.role === 'frame') ? rootBox : undefined);
+  // ...and then the rim is the wall kept between the bases and the scene's edge, so no slot opens at the side
+  const sceneWall = baseTarget === rootBox ? r2(tray.edge + tray.gap) : 0;
   const framePresets = presets.filter((p) => p.kind === 'footprint');
   const basePresets = presets.filter((p) => p.kind === 'base');
   const keyOf = (p: BasePreset) => `${p.system}|${p.kind}|${p.name}`;
@@ -72,7 +76,7 @@ export function AddBar() {
     let s = shape;
     const fits = (q: Shape) => q.w <= area.w + 1e-6 && q.d <= area.d + 1e-6;
     if (!fits(s) && fits({ ...s, w: s.d, d: s.w })) s = { ...s, w: s.d, d: s.w };
-    if (!fits(s)) { setNote(`${num(shape.w)} × ${num(shape.d)} mm does not fit in the ${num(area.w)} × ${num(area.d)} mm area${margin > 0 ? `, which is what is left once the tray rim is allowed for` : ''}.`); return; }
+    if (!fits(s)) { setNote(`${num(shape.w)} × ${num(shape.d)} mm does not fit in the ${num(area.w)} × ${num(area.d)} mm area${margin > 0 ? `, which is what is left once the tray's rim is allowed for` : ''}.`); return; }
     const turned = s !== shape;
     if (opts.fillGrid) {
       // n bases with (n - 1) gaps between them have to fit the area
@@ -201,15 +205,15 @@ export function AddBar() {
               </div>
             )}
             <div className="row">
-              <span className="lbl"><strong>2 · Bases inside {frameBox ? `“${frameBox.piece.name}”` : 'the frame'}</strong>{frameBox && <span className="muted"> ({num(frameBox.usable.w)} × {num(frameBox.usable.h)} mm)</span>}</span>
+              <span className="lbl"><strong>2 · Bases {baseTarget === rootBox ? 'on the scene' : <>inside {frameBox ? `“${frameBox.piece.name}”` : 'the frame'}</>}</strong>{baseTarget && <span className="muted"> ({num(baseTarget.usable.w)} × {num(baseTarget.usable.h)} mm)</span>}</span>
               {presetSelect(baseKey, setBase, basePresets, 'Pick a base size…', 'Individual base sizes by game; or type a size')}
               {sizeInputs(baseShape, setBaseShape, 'Width, left to right (mm)')}
-              <button type="button" className="primary" disabled={!frameBox} onClick={() => frameBox && place(frameBox, baseShape, { role: 'base', key: baseKey })} title={frameBox ? 'Add one base in the largest free spot of the frame' : 'Place a frame first'}>+ Add one</button>
-              <button type="button" disabled={!frameBox} onClick={() => frameBox && place(frameBox, baseShape, { role: 'base', key: baseKey, fillGrid: true })} title={frameBox ? 'Fill the frame with as many of these as fit' : 'Place a frame first'}>Fill frame</button>
+              <button type="button" className="primary" disabled={!baseTarget} onClick={() => baseTarget && place(baseTarget, baseShape, { role: 'base', key: baseKey, margin: sceneWall })} title={baseTarget === rootBox ? 'Add one base in the largest free spot of the scene' : baseTarget ? 'Add one base in the largest free spot of the frame' : 'Place a frame first'}>+ Add one</button>
+              <button type="button" disabled={!baseTarget} onClick={() => baseTarget && place(baseTarget, baseShape, { role: 'base', key: baseKey, fillGrid: true, margin: sceneWall })} title={baseTarget === rootBox ? 'Fill the scene with as many of these as fit' : baseTarget ? 'Fill the frame with as many of these as fit' : 'Place a frame first'}>{baseTarget === rootBox ? 'Fill scene' : 'Fill frame'}</button>
               {mode === 'tray' && (
                 <label title={TRAY_HELP.spacing}>Space between bases <input type="number" step={0.5} min={0} max={10} value={num(baseSpacing)} onChange={(e) => setBaseSpacing(clampNum(e.target.value, 0, 10))} /> mm</label>
               )}
-              <button type="button" disabled={!frameBox} onClick={() => frameBox && useLeftover(frameBox)} title="Turn the largest empty part of the frame into a base (e.g. the back strip)">Use leftover</button>
+              {baseTarget !== rootBox && <button type="button" disabled={!frameBox} onClick={() => frameBox && useLeftover(frameBox)} title="Turn the largest empty part of the frame into a base (e.g. the back strip)">Use leftover</button>}
               {deleteBtn}
             </div>
             {mode === 'tray' && (
@@ -227,7 +231,7 @@ export function AddBar() {
           <div className="row">
             <span className={note ? 'warn' : 'hint'}>
               {note ?? (mode === 'tray'
-                ? (frameBox ? TRAY_HELP.intro : 'Pick a unit frame and press “Place frame”, then fill it with bases. When you press Base-ify you get the bases and a tray they drop into.')
+                ? (frameBox ? TRAY_HELP.intro : 'Place a unit frame for a tray the size of one unit, or skip the frame and put bases straight on the scene: then the whole scene becomes the tray. When you press Base-ify you get the bases and a tray they drop into.')
                 : mode === 'multibase'
                 ? (frameBox
                   ? 'Add the removable row first if you want one (e.g. a 25 × 125 strip), then “Fill frame” with the small bases. Drag things to move them; corners resize. Press Base-ify when the layout looks right.'

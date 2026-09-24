@@ -34,6 +34,8 @@ import type { PreparedSource } from '../source/prepareSource';
  * outlines; `computePiece` moves it into the piece's own frame.
  */
 export interface TrayParams {
+  /** the tray is the whole scene: it is meant to stop at the scene's edge, so no rim is missing */
+  wholeScene?: boolean;
   /** thickness of the flat floor under the whole tray, mm */
   floor: number;
   /** how far the surround stands above the floor: the plate height of the bases in it, mm */
@@ -266,7 +268,7 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     // the scene clipped the tray: the frame sits so close to the edge that there is no room for a rim.
     // Measured per side with a real tolerance, because the layout is rounded to 0.01 mm and a
     // hair off the corner is not something to bother anyone about.
-    if (askedBounds) {
+    if (askedBounds && !trayParams.wholeScene) {
       const got = polygonBounds(bottomS);
       const lost = Math.max(got.min[0] - askedBounds.min[0], askedBounds.max[0] - got.max[0], got.min[1] - askedBounds.min[1], askedBounds.max[1] - got.max[1]);
       if (lost > 0.2) warnings.push(`There is no room for a rim on every side: the frame reaches the edge of the scene, so the tray is ${lost.toFixed(1)} mm short there. Move the frame in, or use a narrower rim.`);
@@ -275,7 +277,9 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     trayCells = cellRes.cells;
     trayThinSpan = cellRes.thinSpan;
     warnings.push(...cellRes.warnings);
-    warnings.push(...slotWallWarnings(bottomS, trayParams.pockets, trayParams.minWall));
+    const wallWarnings = slotWallWarnings(bottomS, trayParams.pockets, trayParams.minWall);
+    // the whole scene as the tray has no rim to widen: the bases have to move in from the scene's edge
+    warnings.push(...(trayParams.wholeScene ? wallWarnings.map((w) => w.replace(/Make the rim wider, or move (it|them) in\./, 'Move $1 in from the edge of the scene.').replace('a wider rim is stronger.', 'moving them in makes the tray stronger.')) : wallWarnings));
     if (objectMode) {
       // the surround is the scene's own material, carved cell by cell and lifted onto the floor
       trayCarveFloor = 0.05;

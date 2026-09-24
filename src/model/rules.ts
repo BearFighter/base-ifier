@@ -6,7 +6,8 @@
  *  - Single base: one base, straight on the scene.
  *  - Diorama: any number of bases straight on the scene; leftovers at Base-ify.
  *  - Multibase: a unit frame on the scene, bases inside the frame.
- *  - Movement tray: the same as Multibase, plus a tray per frame at Base-ify.
+ *  - Movement tray: the same as Multibase, plus a tray per frame at Base-ify; or, with no
+ *    frame at all, bases straight on the scene and the WHOLE scene becomes the tray.
  */
 import type { PieceRole, WorkMode } from './types';
 
@@ -16,6 +17,9 @@ export interface PlacementTarget {
   parentRole: PieceRole;
   /** how many items the parent already holds */
   siblingCount: number;
+  /** on the scene: how many unit frames and how many bases straight on it (movement tray mode needs to know) */
+  rootFrames?: number;
+  rootBases?: number;
 }
 
 /** Plain-English reason the placement is refused, or null when it is allowed. */
@@ -29,11 +33,12 @@ export function placementError(mode: WorkMode, role: PieceRole, target: Placemen
     if (siblingCount > 0) return `Single base mode holds one base and ${siblingCount} ${siblingCount === 1 ? 'is' : 'are'} already placed. Delete ${siblingCount === 1 ? 'it' : 'them'} first, or switch to Diorama mode to keep several.`;
   }
   if (mode === 'diorama' && (role === 'frame' || !parentIsRoot)) return 'Diorama mode: place bases straight on the big base; frames are for Multibase mode.';
-  if ((mode === 'multibase' || mode === 'tray') && role === 'base' && parentIsRoot) {
-    return mode === 'tray'
-      ? 'Movement tray mode: place a unit frame first, then put bases inside it.'
-      : 'Multibase mode: place a unit frame first, then put bases inside it.';
+  if (mode === 'tray' && parentIsRoot) {
+    // either unit frames (a tray per frame) or bases straight on the scene (the whole scene is the tray), never both
+    if (role === 'base' && (target.rootFrames ?? 0) > 0) return 'Movement tray mode: this scene has a unit frame, so bases go inside it. Delete the frame to make the whole scene the tray instead.';
+    if (role === 'frame' && (target.rootBases ?? 0) > 0) return 'Movement tray mode: bases are already placed straight on the scene, so the whole scene is the tray. Delete them to use a unit frame instead.';
   }
+  if (mode === 'multibase' && role === 'base' && parentIsRoot) return 'Multibase mode: place a unit frame first, then put bases inside it.';
   return null;
 }
 

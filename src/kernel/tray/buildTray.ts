@@ -97,7 +97,8 @@ export function buildTray(tray: Polygon2, cells: TrayCell[], spec: TraySpec): Tr
   const H = spec.plateHeight;
   const eps = spec.seamEps ?? TRAY_SEAM_EPS;
   if (tray.length < 3) throw new Error('buildTray: the tray has no outline');
-  if (t <= 0 || H <= 0) throw new Error('buildTray: the floor and the surround must both have a height');
+  // the surround only needs a height when it is built here (an object scene's surround is the object's own material)
+  if (t <= 0 || (cells.length > 0 && H <= 0)) throw new Error('buildTray: the floor and the surround must both have a height');
 
   const slots = spec.magnets?.slots ?? [];
   const floorMin = spec.magnets?.floorMin ?? 0.6;

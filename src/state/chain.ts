@@ -41,8 +41,10 @@ export function traySettingsFor(project: Project, frame: Piece | undefined): Tra
 function plateHeightOf(project: Project, piece: Piece): number {
   const p: EdgeProfile = piece.profile ?? project.defaultProfile ?? PROFILE_GW;
   if (p.kind === 'inset') return p.height;
-  // 'original' keeps the loaded file's own plate
-  return project.sources[piece.sourceId]?.normalization.plateTop ?? 3;
+  // 'original' keeps the loaded file's own plate; a single-shell scene has none (its plate top is
+  // 0), so its bases stand on the standard 3 mm plate a cut base gets there
+  const pt = project.sources[piece.sourceId]?.normalization.plateTop ?? 3;
+  return pt >= 0.5 ? pt : 3;
 }
 
 /**
@@ -79,6 +81,7 @@ export function trayRequestFor(project: Project, piece: Piece): TrayRequest | un
     slots,
     magnets: at.length ? { at, sizing: { dia: m.dia, thick: m.thick, radialTol: m.radialTol, depthTol: m.depthTol, sides: m.sides }, floorMin: m.floorMin } : undefined,
     mixedHeights: heights.size > 1,
+    wholeScene: frame.parentId === null,
     underside: u?.hollow ? { depth: u.voidDepth, rim: u.rimWidth, ringWidth: u.ringWidth } : undefined,
   };
 }

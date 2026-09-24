@@ -735,3 +735,43 @@ describe('maker mark by base type', () => {
     expect(atMark).toBeGreaterThan(100);
   });
 });
+
+describe('movement tray: the whole scene as the tray, and single-shell plate heights', () => {
+  it('builds a single-shell tray whose bases have no plate of their own (it used to throw)', () => {
+    const src = prepareSource(boxSoup(80, 50, 8), 'slab_80x50.stl');
+    // plateHeight 0 is what a single-shell scene reported for "original" edge bases
+    const tray = computePiece(sourceFrame(src), { shape: { kind: 'rect', w: 56, d: 31 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, role: 'tray', tray: trayParamsFor(2, 25, 1, { plateHeight: 0 }) }, { source: src });
+    expect(tray.tray).toBeDefined();
+    expect(isWatertight(tray.body)).toBe(true);
+    expect(tray.sculpt.triCount).toBeGreaterThan(0);
+  });
+
+  for (const c of [{ name: 'two-shell', src: scene }, { name: 'single-shell', src: () => prepareSource(boxSoup(150, 100, 8), 'slab_150x100.stl') }]) {
+    it(`${c.name} scene: the tray is the scene, with no missing-rim warning, and the bases sit flush in it`, () => {
+      const src = c.src();
+      const root = sourceFrame(src);
+      const sz = { dia: 3, thick: 2, radialTol: 0.1, depthTol: 0.1, sides: 24 };
+      const baseAt = (x: number, y: number) => computePiece(root, { shape: { kind: 'ellipse', w: 32, d: 32 }, xy: [x, y], rotDeg: 0, edges: [{ kind: 'vertical' }], profile: PROFILE_FLAT }, { source: src, hollow: DEFAULT_HOLLOW, magnetSlots: magnetSlotSpecs(sz, [{ x: 0, y: 0 }]) });
+      const positions: [number, number][] = [[-40, 10], [30, -20]];
+      const bases = positions.map(([x, y]) => baseAt(x, y));
+      const pockets = positions.map(([x, y]) => trayPocket({ kind: 'ellipse', w: 32, d: 32 }, x, y, 0, 0.2));
+      const tp = trayParamsFor(2, 25, 1, { pockets, magnets: magnetSlotSpecs(sz, positions.map(([x, y]) => ({ x, y }))), wholeScene: true });
+      const tray = computePiece(root, { shape: { ...src.nominal }, xy: [0, 0], rotDeg: 0, edges: FLAT4, role: 'tray', tray: tp }, { source: src });
+      expect(tray.warnings.filter((w) => /no room for a rim|failed|force-closed/.test(w))).toEqual([]);
+      expect(isWatertight(tray.body)).toBe(true);
+      const F = tray.tray!.floor;
+      // every slot floor is bare, and each base, standing on the floor, meets the ground around it
+      for (let i = 0; i < positions.length; i++) {
+        const [x, y] = positions[i];
+        const lx = x - tray.origin[0], ly = y - tray.origin[1];
+        const slot = ellipsePolygon(30, 30, 32).map(([px, py]) => [px + lx, py + ly] as [number, number]);
+        for (const sp of [tray.body, tray.sculpt]) if (sp.triCount) expect(zRangeOver(sp, slot).max).toBeLessThanOrEqual(F + 1e-4);
+        const b = bases[i];
+        const baseTop = Math.max(...[b.body, b.sculpt].filter((sp) => sp.triCount > 0).map((sp) => boundsOfSoup(sp).max[2]));
+        // flat slab: the whole surround top is one level (a few big triangles, so take its highest point)
+        if (c.name === 'single-shell') expect(boundsOfSoup(tray.sculpt).max[2]).toBeCloseTo(F + baseTop, 3);
+        else expect(tray.outline.plateTop - F).toBeCloseTo(b.outline.plateTop, 6); // plate tops meet, so the scenery lines up
+      }
+    });
+  }
+});

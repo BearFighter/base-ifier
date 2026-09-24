@@ -13,7 +13,7 @@ export const TRAY_HELP = {
   intro: 'Every base you put in the frame leaves a slot in the tray it drops into. The material between and around the slots stays, so the tray and the bases look like one scene.',
   floor: 'How thick the flat sheet under the whole tray is. Thin trays can curl as the resin cures, so go thicker on big trays — 1 mm is fine up to about a hand’s width.',
   gap: 'Extra room in each slot so a printed base drops in without forcing it. 0.2 mm suits resin, 0.3 mm for FDM.',
-  edge: 'How far the tray sticks out past the bases, so there is always an edge to pick it up by. It is also what stiffens the tray, so do not go below 2 mm on a big one.',
+  edge: 'How far the tray sticks out past the bases, so there is always an edge to pick it up by. It is also what stiffens the tray, so do not go below 2 mm on a big one. With no frame, it is the wall kept between the bases and the edge of the scene.',
   magnets: 'Puts a magnet hole in the tray floor under every base, lined up with the base’s own magnet. If the floor is thinner than the magnets, the whole tray is made deep enough for them, so nothing pokes through and the bases still sit flush. Check which way round the magnets go before gluing.',
   spacing: 'Leaves a gap between bases when you fill the frame. A small gap gives the tray a raised wall between each base — it looks more like a real tray and stops a big thin floor from curling.',
   profile: 'Bases keep the edge shape you picked. Slots are sized from the bottom of the base, so any edge shape drops in; a sloped edge leaves a small groove around the base in the tray.',

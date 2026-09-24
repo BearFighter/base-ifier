@@ -49,6 +49,8 @@ export interface SocketRequest {
  * (the scene), so the worker only has to add the scene origin.
  */
 export interface TrayRequest {
+  /** the tray is the whole scene (no frame was placed): it has no rim beyond the scene */
+  wholeScene?: boolean;
   /** thickness of the flat sheet under the whole tray, mm */
   floor: number;
   /** extra room per side in each slot, mm */

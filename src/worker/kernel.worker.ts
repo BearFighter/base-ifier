@@ -105,6 +105,7 @@ function resolveTray(frame: ParentFrame, req: TrayRequest): TrayParams {
     watermarkHeight: MAKER_MARK_HEIGHT,
     underside: req.underside,
     mixedHeights: req.mixedHeights,
+    wholeScene: req.wholeScene,
   };
 }
 
