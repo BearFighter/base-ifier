@@ -105,8 +105,10 @@ describe('hollow underside', () => {
     // too small: a 20 mm base has a 16 mm void; 12 characters do not fit legibly
     expect(placeWatermark(rectPolygon(16, 16), 'BITDEATHLABS', [])).toBeNull();
     expect(placeWatermark(rectPolygon(46, 21), 'BITDEATHLABS', [])).not.toBeNull();
+    // a small base gets the short form instead of nothing
     const small = buildBody(outline(20, 20), [], DEFAULT_HOLLOW);
-    expect(small.underside!.watermark).toBe(false);
+    expect(small.underside!.watermark).toBe(true);
+    expect(small.mark).toEqual({ kind: 'raised', text: 'BDL' });
     expect(isWatertight(small.soup)).toBe(true);
   });
 

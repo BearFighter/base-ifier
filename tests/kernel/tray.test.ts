@@ -8,7 +8,7 @@ import { PROFILE_FLAT } from '@/kernel/types';
 import { syntheticTwoShellBase, boxSoup } from '../fixtures/synthetic';
 import type { EdgeTreatment } from '@/kernel/types';
 import { largestBareFloor, minWidth, rectPoly, slotWallWarnings, traySurroundCells, trayPocket, TRAY_SEAM_EPS } from '@/kernel/tray/cells';
-import { buildTray, TRAY_EMBED, TRAY_MARK_PROUD } from '@/kernel/tray/buildTray';
+import { buildTray, TRAY_EMBED } from '@/kernel/tray/buildTray';
 import { rectPolygon, ellipsePolygon } from '@/kernel/geom2d/shapes';
 import { polygonArea, pointInConvexPolygon } from '@/kernel/geom2d/polygon';
 import { outsetConvex } from '@/kernel/pipeline/plug';
@@ -314,64 +314,36 @@ describe('tray body', () => {
     }
   });
 
-  it('embosses the maker mark on the outer wall, standing proud of it, and never inside a slot', () => {
+  it('engraves the maker mark into the underside of the floor: out of sight, never proud, never in a slot', () => {
     const { res } = twoSlotTray(1);
     expect(res.watermark).toBe(true);
-    // the mark lives on the front wall (y = -15.5) and stands TRAY_MARK_PROUD out of it
-    const P = res.soup.positions;
-    let outside = 0, minY = Infinity, maxZ = 0;
-    for (let i = 0; i < res.soup.triCount * 9; i += 3) {
-      minY = Math.min(minY, P[i + 1]);
-      if (P[i + 1] < -15.5 - 1e-6) { outside++; maxZ = Math.max(maxZ, P[i + 2]); }
-    }
-    expect(outside).toBeGreaterThan(50);
-    expect(minY).toBeCloseTo(-15.5 - TRAY_MARK_PROUD, 6);
-    expect(maxZ).toBeLessThanOrEqual(4);
     expect(isWatertight(res.soup)).toBe(true);
-    // nothing of it is inside a slot
+    // nothing stands outside the tray's outline or below its underside: the mark is sunk in
+    const b = boundsOfSoup(res.soup);
+    expect(b.min[2]).toBeCloseTo(0, 9);
+    expect(b.max[0]).toBeLessThanOrEqual(28 + 1e-6);
+    expect(b.min[1]).toBeGreaterThanOrEqual(-15.5 - 1e-6);
+    // the pockets of the mark reach 0.3 mm up into the floor
+    const P = res.soup.positions;
+    let ceiling = 0;
+    for (let i = 0; i < res.soup.triCount * 9; i += 3) if (Math.abs(P[i + 2] - 0.3) < 1e-6) ceiling++;
+    expect(ceiling).toBeGreaterThan(100);
+    // and nothing is added inside the slots
     for (const x of [-12.5, 12.5]) expect(zRangeOver(res.soup, rectPolygon(24, 24, x, 0)).max).toBeLessThanOrEqual(1 + 1e-6);
 
-    // a slot that opens at the front edge leaves no wall there: the mark moves to a wall that exists
-    const openTray = rectPolygon(56, 31);
-    const openPockets = [outsetConvex(rectPolygon(25, 25, -12.5, -6), 0.2), outsetConvex(rectPolygon(25, 25, 12.5, 0), 0.2)];
-    const open = buildTray(openTray, traySurroundCells(openTray, openPockets).cells, { floor: 1, plateHeight: 3, pockets: openPockets, gap: 0.2, watermark: 'BITDEATHLABS', watermarkHeight: 0.3 });
-    expect(open.watermark).toBe(true);
-    let frontMark = 0, backMark = 0;
-    for (let i = 0; i < open.soup.triCount * 9; i += 3) {
-      const y = open.soup.positions[i + 1];
-      if (y < -15.5 - 1e-6) frontMark++;
-      if (y > 15.5 + 1e-6) backMark++;
-    }
-    expect(frontMark).toBe(0);
-    expect(backMark).toBeGreaterThan(50);
-    for (const pk of openPockets) expect(zRangeOver(open.soup, insetConvexPoly(pk, 0.5)).max).toBeLessThanOrEqual(1 + 1e-6);
-
-    // too little wall height to be legible: left off, with a warning
-    const flat = buildTray(rectPolygon(56, 31), twoSlotTray(0.6).cells, { floor: 0.6, plateHeight: 1, watermark: 'BITDEATHLABS', watermarkHeight: 0.3 });
-    expect(flat.watermark).toBe(false);
-    expect(flat.warnings.some((w) => /mark/.test(w))).toBe(true);
-
-    // a round tray: the mark follows the curved wall round the front, and the slot floor stays bare
+    // a round tray carries it underneath too, inside its round outline
     const roundTray = ellipsePolygon(80, 60, 64);
     const rp = [trayPocket({ kind: 'ellipse', w: 50, d: 50 }, 0, 0, 0, 0.2)];
-    const rc = traySurroundCells(roundTray, rp).cells;
-    const rr = buildTray(roundTray, rc, { floor: 1, plateHeight: 3, pockets: rp, gap: 0.2, underside: UNDERSIDE, watermark: 'BITDEATHLABS', watermarkHeight: 0.3 });
+    const rr = buildTray(roundTray, traySurroundCells(roundTray, rp).cells, { floor: 1, plateHeight: 3, watermark: 'BITDEATHLABS', watermarkHeight: 0.3 });
     expect(rr.watermark).toBe(true);
     expect(isWatertight(rr.soup)).toBe(true);
     const Q = rr.soup.positions;
-    let out = 0;
-    for (let i = 0; i < rr.soup.triCount * 9; i += 3) {
-      const x = Q[i], y = Q[i + 1], z = Q[i + 2];
-      const e = (x / 40) ** 2 + (y / 30) ** 2;
-      if (e > 1 + 1e-4) {
-        out++;
-        expect(y).toBeLessThan(0); // round the front
-        expect((x / 40.35) ** 2 + (y / 30.35) ** 2).toBeLessThanOrEqual(1 + 1e-4); // never more than the mark's height proud
-      }
-      // nothing stands on the floor inside the slot
-      if (Math.hypot(x, y) < 24.5) expect(z).toBeLessThanOrEqual(1 + 1e-6);
-    }
-    expect(out).toBeGreaterThan(50);
+    for (let i = 0; i < rr.soup.triCount * 9; i += 3) expect((Q[i] / 40) ** 2 + (Q[i + 1] / 30) ** 2).toBeLessThanOrEqual(1 + 1e-4);
+
+    // a tray too small for even the short form goes without, and says so
+    const tiny = buildTray(rectPolygon(6, 6), [], { floor: 1, plateHeight: 3, watermark: 'BITDEATHLABS', watermarkHeight: 0.3 });
+    expect(tiny.watermark).toBe(false);
+    expect(tiny.warnings.some((w) => /maker mark/.test(w))).toBe(true);
   });
 });
 
@@ -500,21 +472,15 @@ describe('tray in the pipeline', () => {
     expect(zRangeOver(tray.body, rectPolygon(44, 20)).max).toBeCloseTo(t, 5);
     expect(zRangeOver(tray.sculpt, rectPolygon(44, 20)).max).toBe(-Infinity);
 
-    // with the mark on: an object scene's outer wall is the floor band plus the scene's own material
-    // standing on it, so the mark goes there, and never on the floor inside a slot
+    // with the mark on: it is engraved under the floor, whatever the scene stands on it
     const slots = [rectPolygon(24, 24, -12.5, 0), rectPolygon(24, 24, 12.5, 0)];
     const marked = computePiece(sourceFrame(src), { shape: { kind: 'rect', w: 56, d: 31 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, role: 'tray', tray: trayParamsFor(2, 25, t) }, { source: src });
     expect(marked.tray!.watermark).toBe(true);
+    expect(isWatertight(marked.body)).toBe(true);
     for (const sl of slots) expect(zRangeOver(marked.body, sl).max).toBeLessThanOrEqual(t + 1e-4);
-    // a floor too thin for the mark on its own still gets it, on the scene's wall above the floor
-    const thin = computePiece(sourceFrame(src), { shape: { kind: 'rect', w: 56, d: 31 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, role: 'tray', tray: trayParamsFor(2, 25, 1, { magnets: undefined }) }, { source: src });
-    expect(thin.tray!.floor).toBeCloseTo(1, 6);
-    expect(thin.tray!.watermark).toBe(true);
-    for (const sl of slots) expect(zRangeOver(thin.body, sl).max).toBeLessThanOrEqual(1 + 1e-4);
-    const tb = boundsOfSoup(thin.body);
-    expect(tb.max[2]).toBeGreaterThan(1.5); // up the wall, not in the floor band
-    // on the long (56 mm) wall, standing its full height proud of it
-    expect(Math.min(tb.min[1], -tb.max[1])).toBeCloseTo(-(15.5 + TRAY_MARK_PROUD), 5);
+    const mb = boundsOfSoup(marked.body);
+    expect(mb.min[2]).toBeCloseTo(0, 6);
+    expect(mb.max[2]).toBeLessThanOrEqual(t + 1e-4); // nothing on the walls: the floor is all the body there is
   });
 
   it('reports a slot at the tray edge, a magnet thicker than the floor, and mixed edge shapes', () => {
@@ -697,5 +663,75 @@ describe('magnet cup: flush with the bottom of the base', () => {
     expect(holeCeiling(ok.base.body, ok.slot.radius - 0.2)).toBeCloseTo(2.2, 5);
     const tooThick = place(3); // needs 3.1 mm: more than the plate leaves
     expect(tooThick.base.warnings.some((w) => /stick out/.test(w))).toBe(true);
+  });
+});
+
+/**
+ * The maker mark goes wherever it is out of sight and cannot spoil the base: raised on the
+ * ceiling of a hollow underside, engraved into the bottom of anything solid, the short form
+ * when the full name would be illegible. It must never stop a base sitting flat.
+ */
+describe('maker mark by base type', () => {
+  const MARK = 'BITDEATHLABS';
+  const sizing3x2 = { dia: 3, thick: 2, radialTol: 0.1, depthTol: 0.1, sides: 24 };
+  const place = (src: ReturnType<typeof scene>, opts: Parameters<typeof computePiece>[2], w = 25) => {
+    const root = sourceFrame(src);
+    const frameRes = computePiece(root, { shape: { kind: 'rect', w: 50, d: 25 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, profile: PROFILE_FLAT, role: 'frame' }, { source: src, skipSculpt: true });
+    return computePiece(frameRes.frame, { shape: { kind: 'rect', w, d: w }, xy: [-12.5, 0], rotDeg: 0, edges: FLAT4, profile: PROFILE_FLAT }, opts);
+  };
+
+  it('is raised on the void ceiling of a hollow base', () => {
+    const src = scene();
+    const base = place(src, { source: src, hollow: DEFAULT_HOLLOW, mark: MARK, magnetSlots: magnetSlotSpecs(sizing3x2, [{ x: 0, y: 0 }]) });
+    expect(base.mark).toEqual({ kind: 'raised', text: MARK });
+    expect(isWatertight(base.body)).toBe(true);
+    expect(boundsOfSoup(base.body).min[2]).toBeCloseTo(0, 6);
+  });
+
+  it('is engraved into the bottom of a solid base, and the base still sits on its whole bottom face', () => {
+    const src = scene();
+    const slots = magnetSlotSpecs(sizing3x2, [{ x: 0, y: 0 }]);
+    const plain = place(src, { source: src, magnetSlots: slots });
+    const base = place(src, { source: src, mark: MARK, magnetSlots: slots });
+    expect(plain.mark ?? null).toBeNull();
+    expect(base.mark).toEqual({ kind: 'engraved', text: MARK });
+    expect(isWatertight(base.body)).toBe(true);
+    // (the synthetic scene's own sculpt cut warns about a loop; nothing about the body or the mark may)
+    expect(base.warnings.filter((w) => !w.startsWith('sculpt:'))).toEqual(plain.warnings.filter((w) => !w.startsWith('sculpt:')));
+    // nothing below the seating plane, and the pockets remove a little material
+    expect(boundsOfSoup(base.body).min[2]).toBeCloseTo(0, 9);
+    const lost = signedVolume(plain.body) - signedVolume(base.body);
+    expect(lost).toBeGreaterThan(0.5);
+    expect(lost).toBeLessThan(15);
+  });
+
+  it('is engraved under a base too small to hollow, and uses the short form when the name will not fit', () => {
+    const src = scene();
+    const tiny = place(src, { source: src, hollow: DEFAULT_HOLLOW, mark: MARK }, 7);
+    expect(tiny.underside).toBeUndefined(); // too small to hollow
+    expect(tiny.mark).toEqual({ kind: 'engraved', text: 'BDL' });
+    expect(isWatertight(tiny.body)).toBe(true);
+  });
+
+  it('bores the magnet holes and engraves the mark into a solid base carved out of an object', () => {
+    const src = prepareSource(boxSoup(80, 50, 8), 'slab_80x50.stl');
+    const slots = magnetSlotSpecs(sizing3x2, [{ x: 0, y: 0 }]);
+    const base = place(src as ReturnType<typeof scene>, { source: src, mark: MARK, magnetSlots: slots });
+    expect(base.carved).toBeDefined();
+    expect(base.mark).toEqual({ kind: 'engraved', text: MARK });
+    expect(isWatertight(base.sculpt)).toBe(true);
+    expect(base.warnings.filter((w) => /underside|pocket|earcut/i.test(w))).toEqual([]);
+    const s = base.sculpt;
+    expect(boundsOfSoup(s).min[2]).toBeCloseTo(0, 5);
+    // the magnet hole: from the bottom face up exactly the magnet's depth
+    const P = s.positions;
+    let atDepth = 0, atMark = 0;
+    for (let i = 0; i < s.triCount * 9; i += 3) {
+      const r = Math.hypot(P[i], P[i + 1]);
+      if (Math.abs(P[i + 2] - slots[0].depth) < 1e-4 && r < slots[0].radius + 1e-4) atDepth++;
+      if (Math.abs(P[i + 2] - 0.3) < 1e-4 && r > slots[0].radius + 0.4) atMark++;
+    }
+    expect(atDepth).toBeGreaterThan(slots[0].sides);
+    expect(atMark).toBeGreaterThan(100);
   });
 });

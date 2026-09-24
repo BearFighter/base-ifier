@@ -35,6 +35,10 @@ export interface HollowSpec {
 export const MAKER_MARK = 'BITDEATHLABS';
 /** How far the mark stands out, mm. */
 export const MAKER_MARK_HEIGHT = 0.3;
+/** The short form, for bases too small to carry the full name legibly. */
+export const MAKER_MARK_SHORT = 'BDL';
+/** How deep the mark is engraved into a solid bottom face, mm. */
+export const MAKER_MARK_DEPTH = 0.3;
 
 export const DEFAULT_HOLLOW: HollowSpec = { depth: 2, rim: 2, ringHeight: 0.5, ringWidth: 0.4, watermark: MAKER_MARK, watermarkHeight: MAKER_MARK_HEIGHT };
 
@@ -234,6 +238,102 @@ export function placeWatermark(voidPoly: Polygon2, text: string, keepOut: KeepOu
     }
   }
   return null;
+}
+
+/**
+ * The maker mark as it fits in `area`: the full name when it is legible (0.22 mm pixels or
+ * bigger), otherwise the short form, otherwise nothing. Any other text is tried as given.
+ */
+export function placeMakerMark(area: Polygon2, keepOut: KeepOutCircle[], text: string = MAKER_MARK): { text: string; place: WatermarkPlacement } | null {
+  const tries = text === MAKER_MARK ? [MAKER_MARK, MAKER_MARK_SHORT] : [text];
+  for (const t of tries) {
+    const place = placeWatermark(area, t, keepOut);
+    if (place) return { text: t, place };
+  }
+  return null;
+}
+
+/** An engraved mark ready to cut into a face: the ring to leave as ONE hole in the face, and the mesh that fills it. */
+export interface EngravedPatch {
+  /** the outline of the text block, CCW, through every grid point on it (so the face around it never leaves a T-junction) */
+  ring: Polygon2;
+  /** fill the ring: the face at z0 (facing down) where there is no ink, a pocket up to z0 + depth where there is */
+  build(out: SoupBuilder, z0: number, depth: number): void;
+}
+
+/**
+ * The mark ENGRAVED into a solid face (the bottom of a solid base, a carved floor, a tray's
+ * underside), mirrored to read from below like the raised mark. The whole text block is one
+ * hole in the face, filled with an exact grid: a column line per pixel, and per row a band
+ * for the ink with a hair band above and below, so letters on neighbouring rows never touch.
+ * Grid cells without ink are face; cells with ink are pocket ceiling, with a wall wherever a
+ * pocket cell meets a face cell. Every piece shares the grid's own vertices, so the result is
+ * watertight by construction (earcut with one hole per pixel run drops triangles between
+ * holes that share a straight line, which every run in a row does).
+ */
+export function engravedMarkPatch(text: string, place: WatermarkPlacement): EngravedPatch {
+  const t = textPixels(text);
+  const { px, centre, vertical } = place;
+  const hair = px * 0.1;
+  const W = t.cols * px, H = t.rows * px;
+  const us: number[] = [];
+  for (let k = 0; k <= t.cols; k++) us.push(-W / 2 + k * px);
+  // v lines from the top down; band j lies between vs[j] and vs[j + 1]
+  const vs: number[] = [H / 2];
+  const band: { row: number; ink: boolean }[] = [];
+  for (let r = 0; r < t.rows; r++) {
+    const top = H / 2 - r * px, bot = H / 2 - (r + 1) * px;
+    vs.push(top - hair); band.push({ row: r, ink: false });
+    vs.push(bot + hair); band.push({ row: r, ink: true });
+    vs.push(bot); band.push({ row: r, ink: false });
+  }
+  const nk = t.cols, nb = band.length;
+  const xy = (u: number, v: number): Vec2 => (vertical ? [centre[0] + v, centre[1] - u] : [centre[0] - u, centre[1] + v]); // mirrored in u
+  const ink = (k: number, j: number) => k >= 0 && k < nk && j >= 0 && j < nb && band[j].ink && t.on(band[j].row, k);
+  const ring: Polygon2 = [];
+  for (let k = 0; k <= nk; k++) ring.push(xy(us[k], vs[nb]));
+  for (let j = nb - 1; j >= 0; j--) ring.push(xy(us[nk], vs[j]));
+  for (let k = nk - 1; k >= 0; k--) ring.push(xy(us[k], vs[0]));
+  for (let j = 1; j < nb; j++) ring.push(xy(us[0], vs[j]));
+  let area2 = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    area2 += a[0] * b[1] - b[0] * a[1];
+  }
+  if (area2 < 0) ring.reverse();
+  return {
+    ring,
+    build(out: SoupBuilder, z0: number, depth: number): void {
+      const z1 = z0 + depth;
+      const down = (a: Vec2, b: Vec2, c: Vec2, z: number) => {
+        const cr = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+        if (cr < 0) out.tri(a[0], a[1], z, b[0], b[1], z, c[0], c[1], z);
+        else out.tri(a[0], a[1], z, c[0], c[1], z, b[0], b[1], z);
+      };
+      // a wall from z0 to z1 along a-b, facing the pocket cell whose centre is c
+      const wall = (a: Vec2, b: Vec2, c: Vec2) => {
+        const dx = b[0] - a[0], dy = b[1] - a[1];
+        if (dy * (c[0] - a[0]) - dx * (c[1] - a[1]) < 0) { const tmp = a; a = b; b = tmp; }
+        out.tri(a[0], a[1], z0, b[0], b[1], z0, b[0], b[1], z1);
+        out.tri(a[0], a[1], z0, b[0], b[1], z1, a[0], a[1], z1);
+      };
+      for (let j = 0; j < nb; j++) {
+        for (let k = 0; k < nk; k++) {
+          const p00 = xy(us[k], vs[j + 1]), p10 = xy(us[k + 1], vs[j + 1]), p11 = xy(us[k + 1], vs[j]), p01 = xy(us[k], vs[j]);
+          const pocket = ink(k, j);
+          const z = pocket ? z1 : z0;
+          down(p00, p10, p11, z);
+          down(p00, p11, p01, z);
+          if (!pocket) continue;
+          const c: Vec2 = [(p00[0] + p11[0]) / 2, (p00[1] + p11[1]) / 2];
+          if (!ink(k - 1, j)) wall(p00, p01, c);
+          if (!ink(k + 1, j)) wall(p10, p11, c);
+          if (!ink(k, j + 1)) wall(p00, p10, c);
+          if (!ink(k, j - 1)) wall(p01, p11, c);
+        }
+      }
+    },
+  };
 }
 
 function insideConvex(poly: Polygon2, p: Vec2): boolean {

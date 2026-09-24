@@ -25,7 +25,7 @@ function UndersideSection() {
         <input type="checkbox" checked={u.hollow} onChange={(e) => setUnderside({ hollow: e.target.checked })} />
         <span>Hollow underside with a brim</span>
       </label>
-      <Hint>Only the brim touches the table, so the base sits flat even if a support mark ends up inside the void. Untick for a solid plate with the magnet slots bored into it.</Hint>
+      <Hint>Only the brim touches the table, so the base sits flat even if a support mark ends up inside the void. Untick for a solid plate with the magnet slots bored into it; the maker mark is then engraved into its bottom instead.</Hint>
       {u.hollow && (
         <>
           <Field label="Void depth" unit="mm" help={`Space under the base inside the brim. ${flushNote}`}>
@@ -34,7 +34,7 @@ function UndersideSection() {
           <Field label="Brim width" unit="mm" help="The solid ring around the edge that the base stands on. 2 mm is sturdy; supports for tilted printing land on it.">
             <input type="number" step={0.25} min={1} value={u.rimWidth} onChange={(e) => setUnderside({ rimWidth: Number(e.target.value) })} />
           </Field>
-          <Hint>Every hollow base carries a small BITDEATHLABS mark on the ceiling of its void, mirrored so it reads from below. It shows the base was made with the free version of Base-ifier and cannot be changed.</Hint>
+          <Hint>Every base carries a small BITDEATHLABS mark underneath, where it never shows and never affects how the base sits: raised inside the void of a hollow base, engraved into the bottom of a solid one, and shortened to BDL on small bases. It shows the base was made with the free version of Base-ifier and cannot be changed.</Hint>
           <Details summary="Magnet cup size">
             <Field label="Magnet cup wall" unit="mm" help="How thick the wall of the cup around each magnet is. The cup runs from the ceiling of the void to the bottom of the base, so the magnet is held along its whole height with its face flush with the bottom.">
               <input type="number" step={0.1} min={0.2} value={u.ringWidth} onChange={(e) => setUnderside({ ringWidth: Number(e.target.value) })} />

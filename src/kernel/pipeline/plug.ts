@@ -35,6 +35,16 @@ export interface HollowCap {
   depth: number;
 }
 
+/**
+ * A hole bored up into a carved floor: `poly` (CCW) is cut out of the floor cap; its walls and
+ * ceiling are built from `depth`, unless `fill` builds the inside itself (an engraved mark).
+ */
+export interface FloorPocket {
+  poly: Polygon2;
+  depth: number;
+  fill?: (out: SoupBuilder, z0: number) => void;
+}
+
 export interface ColumnResult {
   soup: Soup;
   warnings: string[];
@@ -86,7 +96,7 @@ export function cutColumnAbove(
   bins: Bins | null,
   poly: Polygon2,
   floorZ: number,
-  opts: { stamp?: { arr: Uint32Array; id: number }; hollow?: HollowCap } = {},
+  opts: { stamp?: { arr: Uint32Array; id: number }; hollow?: HollowCap; pockets?: FloorPocket[] } = {},
 ): ColumnResult {
   const warnings: string[] = [];
   const col = cutPrism(mesh, bins, poly, { stamp: opts.stamp });
@@ -99,49 +109,65 @@ export function cutColumnAbove(
   const basis = planeBasis(plane);
   const { loops, warnings: w } = chainLoops(res.segments[0], basis);
   warnings.push(...w.map((s) => 'floor: ' + s));
-  if (!opts.hollow) {
+  // the void of a hollow underside and any other pockets (magnet holes, an engraved mark) are all holes in the floor cap
+  const pockets = [...(opts.hollow ? [{ poly: opts.hollow.void, depth: opts.hollow.depth }] : []), ...(opts.pockets ?? [])];
+  if (pockets.length === 0) {
     capLoops(loops, plane, out, warnings);
     return { soup: out.build(), warnings };
   }
-  capWithVoid(loops, plane, basis, opts.hollow, floorZ, out, warnings);
+  capWithPockets(loops, plane, basis, pockets, floorZ, out, warnings);
   return { soup: out.build(), warnings };
 }
 
-/** Cap the floor loops with the void polygon as a hole in the outer loop that contains it, then add the void walls and ceiling. */
-function capWithVoid(loops: LoopResult[], plane: Plane, basis: ReturnType<typeof planeBasis>, hollow: HollowCap, floorZ: number, out: SoupBuilder, warnings: string[]): void {
-  const v = hollow.void;
-  const voidUV: number[] = [];
-  for (const p of v) {
-    const [u, w] = toUV(basis, p[0], p[1], floorZ);
-    voidUV.push(u, w);
-  }
-  // the hole must wind opposite to the outers (negative area in the basis)
-  const holeArea = signedAreaUV(voidUV);
-  const holeUV = holeArea > 0 ? reverseUV(voidUV) : voidUV;
-  const holePts: Vec3[] = (holeArea > 0 ? v.slice().reverse() : v).map((p) => [p[0], p[1], floorZ] as Vec3);
+/**
+ * Cap the floor loops with every pocket (CCW polygons: the void of a hollow underside, magnet
+ * holes, the pockets of an engraved mark) as a hole in the outer loop that holds them, then add
+ * each pocket's walls and ceiling. Pockets that do not lie inside that loop are left out.
+ */
+function capWithPockets(loops: LoopResult[], plane: Plane, basis: ReturnType<typeof planeBasis>, pockets: FloorPocket[], floorZ: number, out: SoupBuilder, warnings: string[]): void {
+  const prepared = pockets.map((pk) => {
+    const uv: number[] = [];
+    for (const p of pk.poly) {
+      const [u, w] = toUV(basis, p[0], p[1], floorZ);
+      uv.push(u, w);
+    }
+    // a hole must wind opposite to the outers (negative area in the basis)
+    const area = signedAreaUV(uv);
+    return { pk, holeUV: area > 0 ? reverseUV(uv) : uv, holePts: (area > 0 ? pk.poly.slice().reverse() : pk.poly).map((p) => [p[0], p[1], floorZ] as Vec3) };
+  });
   const outers = loops.filter((l) => l.area > 0);
   const others = loops.filter((l) => l.area <= 0);
   let host: LoopResult | null = null;
+  const first = prepared[0].holeUV;
   for (const o of outers) {
-    if (pointInLoopUV(o.uv, holeUV[0], holeUV[1])) {
+    if (pointInLoopUV(o.uv, first[0], first[1])) {
       if (!host || o.area < host.area) host = o;
     }
   }
   if (!host) {
-    warnings.push('underside: the void does not fit inside the floor; left solid');
+    warnings.push(pockets.length === 1 ? 'underside: the void does not fit inside the floor; left solid' : 'underside: the pockets do not fit inside the floor; left solid');
     capLoops(loops, plane, out, warnings);
     return;
   }
+  const h = host;
+  const inside = prepared.filter((q) => {
+    for (let i = 0; i < q.holeUV.length; i += 2) if (!pointInLoopUV(h.uv, q.holeUV[i], q.holeUV[i + 1])) return false;
+    return true;
+  });
+  if (inside.length < prepared.length) warnings.push('underside: a pocket reaches past the edge of the floor and is left out');
   // every other loop is capped as usual
-  capLoops([...outers.filter((o) => o !== host), ...others], plane, out, warnings);
-  const flat = host.uv.slice();
-  const pts = host.points.slice();
-  const holeIdx = [flat.length / 2];
-  for (let i = 0; i < holeUV.length; i++) flat.push(holeUV[i]);
-  for (const p of holePts) pts.push(p);
+  capLoops([...outers.filter((o) => o !== h), ...others], plane, out, warnings);
+  const flat = h.uv.slice();
+  const pts = h.points.slice();
+  const holeIdx: number[] = [];
+  for (const q of inside) {
+    holeIdx.push(flat.length / 2);
+    for (let i = 0; i < q.holeUV.length; i++) flat.push(q.holeUV[i]);
+    for (const p of q.holePts) pts.push(p);
+  }
   let tris: number[] = [];
   try {
-    tris = earcutFull(flat, holeIdx, warnings);
+    tris = earcutFull(flat, holeIdx.length ? holeIdx : undefined, warnings);
   } catch (e) {
     warnings.push('underside: earcut failed: ' + String(e));
   }
@@ -153,16 +179,19 @@ function capWithVoid(loops: LoopResult[], plane: Plane, basis: ReturnType<typeof
     if (nx * plane.nx + ny * plane.ny + nz * plane.nz >= 0) out.triV(a, b, c);
     else out.triV(a, c, b);
   }
-  // void walls (facing into the void) and ceiling (facing down), sharing the hole's vertices
-  const z0 = floorZ, z1 = floorZ + hollow.depth;
-  const ring = v; // CCW in XY
-  const n = ring.length;
-  for (let i = 0; i < n; i++) {
-    const p = ring[i], q = ring[(i + 1) % n];
-    out.tri(p[0], p[1], z0, q[0], q[1], z1, q[0], q[1], z0);
-    out.tri(p[0], p[1], z0, p[0], p[1], z1, q[0], q[1], z1);
+  // walls (facing into the pocket) and ceiling (facing down), sharing the hole's vertices
+  for (const q of inside) {
+    if (q.pk.fill) { q.pk.fill(out, floorZ); continue; }
+    const ring = q.pk.poly; // CCW in XY
+    const n = ring.length;
+    const z0 = floorZ, z1 = floorZ + q.pk.depth;
+    for (let i = 0; i < n; i++) {
+      const p = ring[i], r = ring[(i + 1) % n];
+      out.tri(p[0], p[1], z0, r[0], r[1], z1, r[0], r[1], z0);
+      out.tri(p[0], p[1], z0, p[0], p[1], z1, r[0], r[1], z1);
+    }
+    for (let i = 1; i + 1 < n; i++) out.tri(ring[0][0], ring[0][1], z1, ring[i + 1][0], ring[i + 1][1], z1, ring[i][0], ring[i][1], z1);
   }
-  for (let i = 1; i + 1 < n; i++) out.tri(ring[0][0], ring[0][1], z1, ring[i + 1][0], ring[i + 1][1], z1, ring[i][0], ring[i][1], z1);
 }
 
 function signedAreaUV(uv: number[]): number {

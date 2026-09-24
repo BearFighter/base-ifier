@@ -15,8 +15,9 @@ import type { HollowSpec } from '../body/hollow';
 import { checkMagnetSlots } from '../body/magnetSlots';
 import { cutPrism } from '../sculpt/cutPrism';
 import { cutColumnAbove, carveSockets, plugFloor, materialThickness } from './plug';
+import type { FloorPocket } from './plug';
 import type { SocketSpec } from './plug';
-import { addWatermark, placeWatermark, ringFor, MIN_CEILING, addMagnetCup } from '../body/hollow';
+import { addWatermark, ringFor, MIN_CEILING, addMagnetCup, placeMakerMark, engravedMarkPatch, MAKER_MARK_DEPTH } from '../body/hollow';
 import type { KeepOutCircle } from '../body/hollow';
 import { offsetEdges, slotWallWarnings, traySurroundCells } from '../tray/cells';
 import type { TrayCell } from '../tray/cells';
@@ -105,8 +106,10 @@ export interface ComputeOptions {
   skipSculpt?: boolean;
   /** reusable stamp buffer for cutPrism */
   stamp?: { arr: Uint32Array; id: number };
-  /** hollow the underside (brim + void + magnet rings + watermark); omitted = solid plate */
+  /** hollow the underside (brim + void + magnet cups + raised mark); omitted = solid plate */
   hollow?: HollowSpec;
+  /** the maker mark: raised in a hollow underside, engraved into the bottom of anything solid; omitted = none */
+  mark?: string;
 }
 
 export interface PieceResult {
@@ -128,6 +131,8 @@ export interface PieceResult {
   timings: Record<string, number>;
   /** the hollow underside actually built (local frame): void outline, depth, whether the watermark fit */
   underside?: { rim: Polygon2; depth: number; watermark: boolean };
+  /** the maker mark as built: raised on a void ceiling or engraved into a solid bottom */
+  mark?: { kind: 'raised' | 'engraved'; text: string } | null;
   /** set when the base was carved out of the object itself (no plate): its floor in the source frame and its thinnest material */
   carved?: { floorZ: number; thickness: number; plug: boolean };
   /** set on a movement tray: everything the export and the UI need, in the piece's own frame */
@@ -254,8 +259,6 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   let trayCells: TrayCell[] = [];
   let trayThinSpan = { w: 0, d: 0 };
   let trayCarveFloor: number | null = null;
-  /** object scenes: the least material the scene stands on the floor anywhere over the tray, mm */
-  let trayMaterialAbove = 0;
   if (trayParams) {
     if (clearance > 0) warnings.push('A tray is always made at its true size, so “slightly smaller for trays” is ignored for it.');
     if (trayParams.pockets.length === 0) warnings.push('There are no bases in this frame yet, so the tray has nothing to hold.');
@@ -278,7 +281,6 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
       trayCarveFloor = 0.05;
       const mt = materialThickness(source.sculpt, source.bins, bottomS, 0);
       if (mt.stats && !mt.flatBottom) warnings.push('The scene is not flat underneath here, so expect small gaps where the tray meets it.');
-      if (mt.stats && mt.stats.misses === 0) trayMaterialAbove = Math.max(0, mt.thickness - trayCarveFloor);
       if (mt.stats && mt.thickness < trayParams.plateHeight) warnings.push(`The scene is only ${mt.thickness.toFixed(1)} mm thick over this tray, so its surround is lower than the bases in places.`);
     }
   }
@@ -386,6 +388,9 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   // --- body: the plate (with its hollow underside), or for carved bases only the rings + watermark
   let body: Soup;
   let underside: PieceResult['underside'];
+  let mark: PieceResult['mark'] = null;
+  /** holes bored into a solid carved base's floor: its magnets and the engraved mark (scene frame) */
+  const carvedPockets: FloorPocket[] = [];
   let trayInfo: PieceResult['tray'];
   const toLocal = (p: Polygon2): Polygon2 => {
     const l = translatePolygon(p, -origin[0], -origin[1]);
@@ -406,8 +411,6 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
       underside: trayParams.underside,
       pockets: pocketsL,
       gap: trayParams.gap,
-      // in an object scene the outer wall is the floor band plus the scene's own material standing on it
-      markMaxZ: trayCarveFloor !== null ? (trayFloor + trayMaterialAbove) * scale : undefined,
     });
     warnings.push(...res.warnings);
     body = res.soup;
@@ -439,19 +442,43 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
         keepOut.push({ x: slot.x, y: slot.y, r: r.ro });
       }
       let watermark = false;
-      const text = opts.hollow.watermark.trim();
+      const text = (opts.mark ?? opts.hollow.watermark).trim();
       if (text && opts.hollow.watermarkHeight > 0) {
-        const place = placeWatermark(voidL, text, keepOut);
-        if (place) { addWatermark(out, text, place, d, Math.min(opts.hollow.watermarkHeight, d - 0.2)); watermark = true; }
+        const pm = placeMakerMark(voidL, keepOut, text);
+        if (pm) { addWatermark(out, pm.text, pm.place, d, Math.min(opts.hollow.watermarkHeight, d - 0.2)); watermark = true; mark = { kind: 'raised', text: pm.text }; }
       }
       underside = { rim: voidL, depth: d, watermark };
+    } else {
+      // a solid carved base: its magnet holes and the engraved mark are pockets bored up into
+      // the carved floor, built in the scene's frame (true size once scaled into the output)
+      const inv = 1 / scale;
+      for (const sl of opts.magnetSlots ?? []) {
+        const cx = origin[0] + sl.x, cy = origin[1] + sl.y, r = sl.radius * inv;
+        const ring: Polygon2 = [];
+        for (let i = 0; i < sl.sides; i++) { const a = (i / sl.sides) * Math.PI * 2; ring.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); }
+        if (sl.depth * inv > carvedInfo.thickness - 0.6) warnings.push('The magnets are deeper than this base is thick; their holes would break through the top.');
+        else carvedPockets.push({ poly: ring, depth: sl.depth * inv });
+      }
+      const text = (opts.mark ?? '').trim();
+      if (text) {
+        const area = insetConvex(bottomS, 1.0 * inv);
+        const keepOut: KeepOutCircle[] = (opts.magnetSlots ?? []).map((sl) => ({ x: origin[0] + sl.x, y: origin[1] + sl.y, r: (sl.radius + 0.5) * inv }));
+        const pm = area.length >= 3 ? placeMakerMark(area, keepOut, text) : null;
+        if (pm) {
+          const patch = engravedMarkPatch(pm.text, pm.place);
+          const depth = MAKER_MARK_DEPTH * inv;
+          carvedPockets.push({ poly: patch.ring, depth, fill: (o, z0) => patch.build(o, z0, depth) });
+          mark = { kind: 'engraved', text: pm.text };
+        }
+      }
     }
     body = out.build();
   } else {
-    const bodyRes = buildBody(outline, slots, opts.hollow);
+    const bodyRes = buildBody(outline, slots, opts.hollow, opts.mark);
     warnings.push(...bodyRes.warnings);
     body = bodyRes.soup;
     underside = bodyRes.underside;
+    mark = bodyRes.mark;
   }
   timings.body = now() - t0; t0 = now();
 
@@ -471,7 +498,7 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     warnings.push(...col.warnings.map((w) => 'sculpt: ' + w));
     sculpt = col.soup;
   } else if (carvedInfo) {
-    const col = cutColumnAbove(source.sculpt, source.bins, bottomS, carvedInfo.floorZ, { stamp: opts.stamp, hollow: hollowCap ?? undefined });
+    const col = cutColumnAbove(source.sculpt, source.bins, bottomS, carvedInfo.floorZ, { stamp: opts.stamp, hollow: hollowCap ?? undefined, pockets: carvedPockets });
     warnings.push(...col.warnings.map((w) => 'sculpt: ' + w));
     sculpt = col.soup;
   } else if (trayParams) {
@@ -545,6 +572,7 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     size,
     timings,
     underside,
+    mark,
     carved: carvedInfo,
     tray: trayInfo,
   };

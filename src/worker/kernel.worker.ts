@@ -156,6 +156,7 @@ function compute(req: ComputeRequest): PieceResult {
     skipSculpt: req.skipSculpt,
     stamp: entry.stamp,
     hollow: withMakerMark(req.underside),
+    mark: MAKER_MARK,
   });
   if (fullKey) {
     entry.full.set(fullKey, result);

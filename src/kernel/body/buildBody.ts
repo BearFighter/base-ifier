@@ -7,7 +7,7 @@ import type { BodyOutline, MagnetSlotSpec, Polygon2, Soup } from '../types';
 import { SoupBuilder } from '../types';
 import { polygonCentroid, polygonArea } from '../geom2d/polygon';
 import { insetConvex } from '../geom2d/offset';
-import { addWatermark, placeWatermark, ringFor, MIN_CEILING, addMagnetCup } from './hollow';
+import { addWatermark, placeMakerMark, engravedMarkPatch, ringFor, MIN_CEILING, addMagnetCup, MAKER_MARK_DEPTH } from './hollow';
 import type { HollowSpec, KeepOutCircle } from './hollow';
 
 export interface BuildBodyResult {
@@ -15,6 +15,8 @@ export interface BuildBodyResult {
   warnings: string[];
   /** set when the underside was hollowed: the void outline (local frame) and its depth */
   underside?: { rim: Polygon2; depth: number; watermark: boolean };
+  /** the maker mark as built: raised on the void ceiling of a hollow base, engraved into the bottom of a solid one */
+  mark: { kind: 'raised' | 'engraved'; text: string } | null;
 }
 
 /** Decide whether a base can be hollowed as asked; null = keep it solid (with a warning). */
@@ -45,7 +47,7 @@ export function slotCircle(slot: MagnetSlotSpec): Polygon2 {
  * bottom, flush with the brim, and an optional watermark is raised on the ceiling. Without it the body is a
  * solid plate with the magnet slots bored into the bottom face.
  */
-export function buildBody(outline: BodyOutline, slots: MagnetSlotSpec[] = [], hollow?: HollowSpec): BuildBodyResult {
+export function buildBody(outline: BodyOutline, slots: MagnetSlotSpec[] = [], hollow?: HollowSpec, markText?: string): BuildBodyResult {
   const warnings: string[] = [];
   const bottom = outline.bottom;
   let top = outline.top;
@@ -57,6 +59,17 @@ export function buildBody(outline: BodyOutline, slots: MagnetSlotSpec[] = [], ho
   }
   const out = new SoupBuilder(256 + slots.length * 4 * 64);
   const plan = hollow ? hollowPlan(hollow, bottom, zT, slots, warnings) : null;
+  let mark: BuildBodyResult['mark'] = null;
+  // a solid base carries the maker mark engraved into its bottom face (it cannot affect how flat
+  // the base sits); a hollow one carries it raised on the void ceiling, further down
+  let engraved: ReturnType<typeof engravedMarkPatch> | null = null;
+  const text = (markText ?? hollow?.watermark ?? '').trim();
+  if (!plan && text) {
+    const area = insetConvex(bottom, 1.0);
+    const keepOut: KeepOutCircle[] = slots.map((sl) => ({ x: sl.x, y: sl.y, r: sl.radius + 0.5 }));
+    const pm = area.length >= 3 ? placeMakerMark(area, keepOut, text) : null;
+    if (pm) { engraved = engravedMarkPatch(pm.text, pm.place); mark = { kind: 'engraved', text: pm.text }; }
+  }
 
   // --- bottom cap (faces -z): with slot holes (solid) or as the brim annulus (hollow)
   const flat: number[] = [];
@@ -72,6 +85,10 @@ export function buildBody(outline: BodyOutline, slots: MagnetSlotSpec[] = [], ho
       circles.push(c);
       holeIdx.push(flat.length / 2);
       for (const p of c) flat.push(p[0], p[1]);
+    }
+    if (engraved) {
+      holeIdx.push(flat.length / 2);
+      for (const p of engraved.ring) flat.push(p[0], p[1]);
     }
   }
   const tris = earcutFull(flat, holeIdx.length ? holeIdx : undefined, warnings);
@@ -115,6 +132,9 @@ export function buildBody(outline: BodyOutline, slots: MagnetSlotSpec[] = [], ho
     }
   }
 
+  // --- the engraved mark's pockets (solid bodies only)
+  if (engraved) engraved.build(out, 0, Math.min(MAKER_MARK_DEPTH, zT - 0.5));
+
   // --- top cap (faces +z): fan
   for (let i = 1; i + 1 < top.length; i++) {
     out.tri(top[0][0], top[0][1], zT, top[i][0], top[i][1], zT, top[i + 1][0], top[i + 1][1], zT);
@@ -134,15 +154,14 @@ export function buildBody(outline: BodyOutline, slots: MagnetSlotSpec[] = [], ho
       keepOut.push({ x: slot.x, y: slot.y, r: r.ro });
     }
     let watermark = false;
-    const text = hollow!.watermark.trim();
     if (text && hollow!.watermarkHeight > 0) {
-      const place = placeWatermark(v, text, keepOut);
-      if (place) { addWatermark(out, text, place, d, Math.min(hollow!.watermarkHeight, d - 0.2)); watermark = true; }
+      const pm = placeMakerMark(v, keepOut, text);
+      if (pm) { addWatermark(out, pm.text, pm.place, d, Math.min(hollow!.watermarkHeight, d - 0.2)); watermark = true; mark = { kind: 'raised', text: pm.text }; }
     }
     underside.watermark = watermark;
   }
 
-  return { soup: out.build(), warnings, underside };
+  return { soup: out.build(), warnings, underside, mark };
 }
 
 function zipBand(B: Polygon2, T: Polygon2, zT: number, out: SoupBuilder): void {
