@@ -261,6 +261,8 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
   let trayCells: TrayCell[] = [];
   let trayThinSpan = { w: 0, d: 0 };
   let trayCarveFloor: number | null = null;
+  /** object scenes: how far above the floor the backing under the surround reaches, mm (source units) */
+  let trayBacking = 0;
   if (trayParams) {
     if (clearance > 0) warnings.push('A tray is always made at its true size, so “slightly smaller for trays” is ignored for it.');
     if (trayParams.pockets.length === 0) warnings.push('There are no bases in this frame yet, so the tray has nothing to hold.');
@@ -284,7 +286,19 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
       // the surround is the scene's own material, carved cell by cell and lifted onto the floor
       trayCarveFloor = 0.05;
       const mt = materialThickness(source.sculpt, source.bins, bottomS, 0);
-      if (mt.stats && !mt.flatBottom) warnings.push('The scene is not flat underneath here, so expect small gaps where the tray meets it.');
+      // The scenery is lifted as if it started at the scene's very bottom, but many scenes are
+      // raised or recessed underneath (a lip round the edge, a hollow): that left the surround
+      // floating 0.8 mm above the floor. The surround is therefore backed with solid blocks from
+      // inside the floor up past the highest point of the underside (lifted the same way), so
+      // floor, backing and scenery overlap into one solid whatever the underside does.
+      const under = mt.stats ? Math.max(0, mt.stats.maxBottom) : 0;
+      trayBacking = Math.max(0.1, under - trayCarveFloor + 0.1);
+      const room = mt.stats ? mt.stats.minTop - trayCarveFloor - 0.15 : trayBacking;
+      if (trayBacking > room) {
+        warnings.push('The scene is hollow or very thin under this tray, so its surround is only backed part of the way up.');
+        trayBacking = Math.max(0.1, room);
+      }
+      if (mt.stats && mt.stats.misses > 0) warnings.push('Part of this tray is not over the scene, so its surround has gaps there.');
       if (mt.stats && mt.thickness < trayParams.plateHeight) warnings.push(`The scene is only ${mt.thickness.toFixed(1)} mm thick over this tray, so its surround is lower than the bases in places.`);
     }
   }
@@ -401,14 +415,20 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     return scale !== 1 ? scalePolygonAbout(l, scale, scale, 0, 0) : l;
   };
   if (trayParams) {
-    // the tray: a floor prism with the magnet holes in it, plus one prism per surround cell.
-    // In an object scene the surround is the scene's own material, so only the floor is built here.
-    const cellsL = trayCells.map((c) => ({ ...c, poly: toLocal(c.poly) }));
+    // the tray: a floor prism with the magnet holes in it, plus one prism per surround cell. In an
+    // object scene the surround is the scene's own material; the prisms are then only its backing,
+    // pulled 0.02 mm in from the tray's edge and the slot walls so they never share a face with it.
+    const cellsL = trayCarveFloor === null
+      ? trayCells.map((c) => ({ ...c, poly: toLocal(c.poly) }))
+      : trayCells.flatMap((c) => {
+          const p = insetConvexEdges(c.poly, c.poly.map((_, i) => (c.onTray[i] || c.onPocket[i] ? 0.02 : 0)));
+          return p.length >= 3 ? [{ ...c, poly: toLocal(p) }] : [];
+        });
     const pocketsL = trayParams.pockets.map(toLocal);
     const magnetsL = (trayParams.magnets ?? []).map((m) => ({ ...m, x: (m.x - origin[0]) * scale, y: (m.y - origin[1]) * scale }));
-    const res = buildTray(bottomL, trayCarveFloor !== null ? [] : cellsL, {
+    const res = buildTray(bottomL, cellsL, {
       floor: trayFloor * scale,
-      plateHeight: trayParams.plateHeight * scale,
+      plateHeight: (trayCarveFloor !== null ? trayBacking : trayParams.plateHeight) * scale,
       magnets: magnetsL.length ? { slots: magnetsL, floorMin: trayParams.magnetFloorMin ?? 0.6 } : undefined,
       watermark: trayParams.watermark,
       watermarkHeight: trayParams.watermarkHeight,
@@ -513,8 +533,11 @@ export function computePiece(parent: ParentFrame, params: PieceParams, opts: Com
     for (const cell of trayCells) {
       if (opts.stamp) opts.stamp.id++;
       if (trayCarveFloor !== null) {
-        // an object scene: the surround is a closed column of the scene's own material
-        const col = cutColumnAbove(source.sculpt, source.bins, cell.poly, trayCarveFloor, { stamp: opts.stamp });
+        // an object scene: the surround is a closed column of the scene's own material, cut from the
+        // object's own bottom (not capped at the carve floor): with the same lift its underside then
+        // sinks trayCarveFloor into the floor, so floor and surround are ONE solid, not two that only
+        // touch on a plane (a seam in the view, and two bodies to a slicer); its top is unchanged
+        const col = cutColumnAbove(source.sculpt, source.bins, cell.poly, source.stats.bounds.min[2] - 0.05, { stamp: opts.stamp });
         warnings.push(...col.warnings.map((w) => 'surround: ' + w));
         if (col.soup.triCount > 0) parts.push(col.soup);
         continue;

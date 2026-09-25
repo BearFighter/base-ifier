@@ -17,6 +17,7 @@ import { isWatertight } from '@/kernel/mesh/validate';
 import { signedVolume } from '@/kernel/mesh/volume';
 import { boundsOfSoup } from '@/kernel/mesh/bbox';
 import type { Polygon2, Soup } from '@/kernel/types';
+import { SoupBuilder } from '@/kernel/types';
 
 const sizing = { dia: 3, thick: 2, radialTol: 0.1, depthTol: 0.1, sides: 24 };
 const UNDERSIDE = { depth: 2, rim: 2, ringWidth: 0.4 };
@@ -461,9 +462,11 @@ describe('tray in the pipeline', () => {
     expect(tray.outline.plateTop).toBeCloseTo(t, 9);
     expect(isWatertight(tray.body)).toBe(true);
     expect(isWatertight(tray.sculpt)).toBe(true);
-    // the floor slab, then the scene's own material standing on it
-    expect(boundsOfSoup(tray.body).max[2]).toBeCloseTo(t, 5);
-    expect(boundsOfSoup(tray.sculpt).min[2]).toBeCloseTo(t, 5);
+    // the floor slab plus a thin backing under the surround (0.1 mm on a flat-bottomed scene),
+    // then the scene's own material standing on it, overlapping both
+    expect(boundsOfSoup(tray.body).max[2]).toBeCloseTo(t + 0.1, 5);
+    // the scene's material sinks 0.05 mm into the floor: one solid, not two touching on a plane
+    expect(boundsOfSoup(tray.sculpt).min[2]).toBeCloseTo(t - 0.05, 5);
     expect(boundsOfSoup(tray.sculpt).max[2]).toBeCloseTo(t + 7.95, 3);
     // the surround is the material around the openings, and nothing stands in them
     const surroundArea = 56 * 31 - 50.4 * 25.4;
@@ -480,7 +483,7 @@ describe('tray in the pipeline', () => {
     for (const sl of slots) expect(zRangeOver(marked.body, sl).max).toBeLessThanOrEqual(t + 1e-4);
     const mb = boundsOfSoup(marked.body);
     expect(mb.min[2]).toBeCloseTo(0, 6);
-    expect(mb.max[2]).toBeLessThanOrEqual(t + 1e-4); // nothing on the walls: the floor is all the body there is
+    expect(mb.max[2]).toBeLessThanOrEqual(t + 0.1 + 1e-4); // nothing on the walls: the floor and the thin backing under the surround
   });
 
   it('reports a slot at the tray edge, a magnet thicker than the floor, and mixed edge shapes', () => {
@@ -774,4 +777,63 @@ describe('movement tray: the whole scene as the tray, and single-shell plate hei
       }
     });
   }
+});
+
+/**
+ * A single-shell scene whose underside is recessed inside a lip (common on printed base sets):
+ * the material under the tray starts `recess` mm above the scene's bottom. The tray used to lift
+ * its scenery as if it started at the very bottom, leaving it floating that far above the floor.
+ */
+function recessedSlab(w: number, d: number, h: number, lip: number, recess: number): Soup {
+  const b = new SoupBuilder(64);
+  const tri = (p: number[], q: number[], r: number[], n: [number, number, number]) => {
+    const ux = q[0] - p[0], uy = q[1] - p[1], uz = q[2] - p[2], vx = r[0] - p[0], vy = r[1] - p[1], vz = r[2] - p[2];
+    const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+    if (cx * n[0] + cy * n[1] + cz * n[2] >= 0) b.tri(p[0], p[1], p[2], q[0], q[1], q[2], r[0], r[1], r[2]);
+    else b.tri(p[0], p[1], p[2], r[0], r[1], r[2], q[0], q[1], q[2]);
+  };
+  const quad = (a: number[], bb: number[], c: number[], dd: number[], n: [number, number, number]) => { tri(a, bb, c, n); tri(a, c, dd, n); };
+  const x0 = -w / 2, x1 = w / 2, y0 = -d / 2, y1 = d / 2, ix0 = x0 + lip, ix1 = x1 - lip, iy0 = y0 + lip, iy1 = y1 - lip;
+  quad([x0, y0, h], [x1, y0, h], [x1, y1, h], [x0, y1, h], [0, 0, 1]);
+  quad([x0, y0, 0], [x1, y0, 0], [x1, y0, h], [x0, y0, h], [0, -1, 0]);
+  quad([x1, y0, 0], [x1, y1, 0], [x1, y1, h], [x1, y0, h], [1, 0, 0]);
+  quad([x1, y1, 0], [x0, y1, 0], [x0, y1, h], [x1, y1, h], [0, 1, 0]);
+  quad([x0, y1, 0], [x0, y0, 0], [x0, y0, h], [x0, y1, h], [-1, 0, 0]);
+  // the lip's bottom face: four trapezoids at z = 0
+  quad([x0, y0, 0], [x1, y0, 0], [ix1, iy0, 0], [ix0, iy0, 0], [0, 0, -1]);
+  quad([x1, y0, 0], [x1, y1, 0], [ix1, iy1, 0], [ix1, iy0, 0], [0, 0, -1]);
+  quad([x1, y1, 0], [x0, y1, 0], [ix0, iy1, 0], [ix1, iy1, 0], [0, 0, -1]);
+  quad([x0, y1, 0], [x0, y0, 0], [ix0, iy0, 0], [ix0, iy1, 0], [0, 0, -1]);
+  // the recess: walls facing into it, and its ceiling facing down
+  quad([ix0, iy0, 0], [ix1, iy0, 0], [ix1, iy0, recess], [ix0, iy0, recess], [0, 1, 0]);
+  quad([ix1, iy0, 0], [ix1, iy1, 0], [ix1, iy1, recess], [ix1, iy0, recess], [-1, 0, 0]);
+  quad([ix1, iy1, 0], [ix0, iy1, 0], [ix0, iy1, recess], [ix1, iy1, recess], [0, -1, 0]);
+  quad([ix0, iy1, 0], [ix0, iy0, 0], [ix0, iy0, recess], [ix0, iy1, recess], [1, 0, 0]);
+  quad([ix0, iy0, recess], [ix1, iy0, recess], [ix1, iy1, recess], [ix0, iy1, recess], [0, 0, -1]);
+  return b.buildCopy();
+}
+
+describe('movement tray on a scene that is raised underneath', () => {
+  it('backs the surround down to the floor, so nothing floats above it', () => {
+    const slab = recessedSlab(150, 100, 8, 2, 0.84);
+    expect(isWatertight(slab)).toBe(true);
+    const src = prepareSource(slab, 'lipped_150mm_100mm.stl');
+    expect(src.mode).toBe('generic');
+    const tray = computePiece(sourceFrame(src), { shape: { kind: 'rect', w: 56, d: 31 }, xy: [0, 0], rotDeg: 0, edges: FLAT4, role: 'tray', tray: trayParamsFor(2, 25, 1) }, { source: src });
+    expect(isWatertight(tray.body)).toBe(true);
+    const F = tray.tray!.floor;
+    // the scenery starts 0.84 mm up in the scene, so after the lift it starts 0.79 mm above the floor...
+    const sceneryBottom = boundsOfSoup(tray.sculpt).min[2];
+    expect(sceneryBottom).toBeCloseTo(F + 0.79, 3);
+    // ...and the backing under the surround reaches past it, from inside the floor
+    const rim = [rectPolygon(3, 31, -26.5, 0), rectPolygon(3, 31, 26.5, 0)];
+    for (const r of rim) {
+      const z = zRangeOver(tray.body, r);
+      expect(z.max).toBeGreaterThan(sceneryBottom + 0.05);
+      expect(z.min).toBeCloseTo(0, 6);
+    }
+    // the backing never enters a slot
+    for (const x of [-12.5, 12.5]) expect(zRangeOver(tray.body, rectPolygon(24, 24, x, 0)).max).toBeLessThanOrEqual(F + 1e-4);
+    expect(tray.warnings.filter((w) => /gap|hollow|thin/i.test(w))).toEqual([]);
+  });
 });
