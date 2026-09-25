@@ -6,7 +6,7 @@
 import { useRef, useState } from 'react';
 import type { Vec2 } from '@/kernel/types';
 import { mmToPx, pxToMm, type ViewMapping } from '@/viewport/mapping';
-import { clampRectToContainer, rectsOverlap, round, snapEdge, snapLines, snapMove, type Rect } from './snap';
+import { clampRectToContainer, footprintsOverlap, round, snapEdge, snapLines, snapMove, type Rect } from './snap';
 import type { BaseBox } from './useBases';
 
 export interface BaseOutlinesProps {
@@ -142,7 +142,8 @@ export function BaseOutlines({ mapping, boxes, selectedId, onSelect, onCommit, m
         const rp = rectToPx(mapping, rect);
         const selected = box.id === selectedId;
         const isTray = box.piece.role === 'tray';
-        const overlaps = !isRoot && !isTray && siblingsOf(boxes, box).some((s) => rectsOverlap(s.rect, rect));
+        const kindOf = (b: BaseBox) => (b.piece.shape.kind === 'ellipse' ? 'ellipse' : 'rect') as 'rect' | 'ellipse';
+        const overlaps = !isRoot && !isTray && siblingsOf(boxes, box).some((s) => footprintsOverlap({ rect: s.rect, kind: kindOf(s) }, { rect, kind: kindOf(box) }));
         const hasKids = box.piece.children.length > 0;
         const isFrame = box.piece.role === 'frame';
         const isLeftover = box.piece.role === 'leftover';

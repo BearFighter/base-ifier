@@ -77,3 +77,55 @@ export function clampRectToContainer(r: Rect, container: { w: number; d: number 
 export function rectsOverlap(a: Rect, b: Rect, eps = 1e-6): boolean {
   return a.x + a.w > b.x + eps && b.x + b.w > a.x + eps && a.y + a.h > b.y + eps && b.y + b.h > a.y + eps;
 }
+
+/** An item's footprint for overlap tests: its bounding rect and whether it is a rectangle or an oval inside it. */
+export interface Footprint {
+  rect: Rect;
+  kind: 'rect' | 'ellipse';
+}
+
+/**
+ * Do two footprints really overlap? Round and oval bases are tested by their own outline,
+ * not their bounding square: two 32 mm rounds whose squares overlap but whose circles do
+ * not are fine. Touching (within `eps`) is not overlapping.
+ */
+export function footprintsOverlap(a: Footprint, b: Footprint, eps = 1e-3): boolean {
+  if (!rectsOverlap(a.rect, b.rect, eps)) return false;
+  if (a.kind === 'rect' && b.kind === 'rect') return true;
+  const round = (f: Footprint) => f.kind === 'ellipse' && Math.abs(f.rect.w - f.rect.h) < 1e-6;
+  if (round(a) && round(b)) {
+    const d = Math.hypot(a.rect.x + a.rect.w / 2 - (b.rect.x + b.rect.w / 2), a.rect.y + a.rect.h / 2 - (b.rect.y + b.rect.h / 2));
+    return d < a.rect.w / 2 + b.rect.w / 2 - eps;
+  }
+  return convexOverlap(outlineOf(a), outlineOf(b), eps);
+}
+
+/** The footprint as a convex polygon (ovals: 64 points on the outline). */
+function outlineOf(f: Footprint): [number, number][] {
+  const { x, y, w, h } = f.rect;
+  if (f.kind === 'rect') return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+  const cx = x + w / 2, cy = y + h / 2, n = 64;
+  const pts: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * Math.PI * 2;
+    pts.push([cx + (w / 2) * Math.cos(t), cy + (h / 2) * Math.sin(t)]);
+  }
+  return pts;
+}
+
+/** Separating-axis test for two convex polygons; they overlap only if no edge normal separates them by more than -eps. */
+function convexOverlap(A: [number, number][], B: [number, number][], eps: number): boolean {
+  for (const P of [A, B]) {
+    for (let i = 0; i < P.length; i++) {
+      const [x0, y0] = P[i], [x1, y1] = P[(i + 1) % P.length];
+      const nx = y1 - y0, ny = x0 - x1;
+      const len = Math.hypot(nx, ny);
+      if (len < 1e-12) continue;
+      let minA = Infinity, maxA = -Infinity, minB = Infinity, maxB = -Infinity;
+      for (const [px, py] of A) { const d = (px * nx + py * ny) / len; if (d < minA) minA = d; if (d > maxA) maxA = d; }
+      for (const [px, py] of B) { const d = (px * nx + py * ny) / len; if (d < minB) minB = d; if (d > maxB) maxB = d; }
+      if (maxA <= minB + eps || maxB <= minA + eps) return false;
+    }
+  }
+  return true;
+}

@@ -11,6 +11,7 @@ import type { Shape } from '@/kernel/types';
 import { SYSTEMS, allPresets, presetLabel, type BasePreset } from '@/model/presets';
 import { profileForSystem, TRAY_FLOOR_MAX, TRAY_FLOOR_MIN } from '@/model/defaults';
 import { usesFrames } from '@/model/rules';
+import { footprintsOverlap } from './snap';
 import { largestEmptyRect } from '@/kernel/geom2d/maxEmptyRect';
 import { useAppStore } from '@/state/project';
 import { TRAY_HELP } from '@/ui/tray/TrayBits';
@@ -72,7 +73,9 @@ export function AddBar() {
     const margin = opts.margin ?? 0;
     const area = { w: r2(target.usable.w - 2 * margin), d: r2(target.usable.h - 2 * margin) };
     const cx = target.usable.x + target.usable.w / 2, cy = target.usable.y + target.usable.h / 2;
-    const children = B.boxes.filter((b) => b.piece.parentId === target.id).map((b) => ({ x: b.rect.x - cx + area.w / 2, y: b.rect.y - cy + area.d / 2, w: b.rect.w, h: b.rect.h }));
+    const siblings = B.boxes.filter((b) => b.piece.parentId === target.id && b.piece.role !== 'tray');
+    const children = siblings.map((b) => ({ x: b.rect.x - cx + area.w / 2, y: b.rect.y - cy + area.d / 2, w: b.rect.w, h: b.rect.h }));
+    const childKinds = siblings.map((b) => (b.piece.shape.kind === 'ellipse' ? 'ellipse' : 'rect') as 'rect' | 'ellipse');
     let s = shape;
     const fits = (q: Shape) => q.w <= area.w + 1e-6 && q.d <= area.d + 1e-6;
     if (!fits(s) && fits({ ...s, w: s.d, d: s.w })) s = { ...s, w: s.d, d: s.w };
@@ -86,7 +89,7 @@ export function AddBar() {
       for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
         const x = c * (s.w + gap), y = r * (s.d + gap);
         const rect: Rect = { x, y, w: s.w, h: s.d };
-        if (children.some((o) => overlaps(o, rect))) continue;
+        if (children.some((o, i) => footprintsOverlap({ rect: o, kind: childKinds[i] }, { rect, kind: s.kind === 'ellipse' ? 'ellipse' : 'rect' }))) continue;
         drafts.push({ shape: s, xy: [r2(x + s.w / 2 - area.w / 2), r2(y + s.d / 2 - area.d / 2)] as [number, number], rotDeg: 0, profile: profileFor(opts.key), role: opts.role });
       }
       if (!drafts.length) { setNote('No room left for bases of that size.'); return; }
@@ -247,11 +250,6 @@ export function AddBar() {
       </div>
     </div>
   );
-}
-
-function overlaps(a: Rect, b: Rect): boolean {
-  const eps = 1e-6;
-  return a.x + a.w > b.x + eps && b.x + b.w > a.x + eps && a.y + a.h > b.y + eps && b.y + b.h > a.y + eps;
 }
 
 function clampNum(v: string, lo: number, hi: number): number {

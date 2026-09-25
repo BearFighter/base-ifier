@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { snapLines, snapMove, snapEdge, clampRectToContainer, rectsOverlap, draftRect } from '@/ui/cutter/snap';
+import { snapLines, snapMove, snapEdge, clampRectToContainer, rectsOverlap, draftRect, footprintsOverlap } from '@/ui/cutter/snap';
 import { fillRemainder, gridDrafts, placeNew, occupiedRects } from '@/ui/cutter/layout';
 
 describe('snapping', () => {
@@ -44,5 +44,33 @@ describe('grid and leftover helpers', () => {
     const r = draftRect(d);
     expect(r.y).toBeCloseTo(0, 6);
     expect(r.x).toBeCloseTo(-62.5, 6);
+  });
+});
+
+describe('footprintsOverlap: round and oval bases are tested by their own outline', () => {
+  const round = (cx: number, cy: number, d: number) => ({ rect: { x: cx - d / 2, y: cy - d / 2, w: d, h: d }, kind: 'ellipse' as const });
+  const oval = (cx: number, cy: number, w: number, h: number) => ({ rect: { x: cx - w / 2, y: cy - h / 2, w, h }, kind: 'ellipse' as const });
+  const box = (cx: number, cy: number, w: number, h: number) => ({ rect: { x: cx - w / 2, y: cy - h / 2, w, h }, kind: 'rect' as const });
+
+  it('two rounds overlap only when the circles do, not their squares', () => {
+    // diagonal neighbours: squares overlap by 4 mm each way, circles are 1.4 mm apart
+    expect(footprintsOverlap(round(0, 0, 32), round(28, 28, 32))).toBe(false);
+    expect(footprintsOverlap(round(0, 0, 32), round(20, 20, 32))).toBe(true);
+    // touching exactly is fine
+    expect(footprintsOverlap(round(0, 0, 32), round(32, 0, 32))).toBe(false);
+    expect(footprintsOverlap(round(0, 0, 32), round(31.5, 0, 32))).toBe(true);
+  });
+
+  it('a round next to a square corner, and ovals end to end', () => {
+    // circle tucked into the corner of a square: bounding boxes overlap, shapes do not
+    expect(footprintsOverlap(box(0, 0, 25, 25), round(24, 24, 25))).toBe(false);
+    expect(footprintsOverlap(box(0, 0, 25, 25), round(20, 0, 25))).toBe(true);
+    expect(footprintsOverlap(oval(0, 0, 60, 35), oval(50, 28, 60, 35))).toBe(false);
+    expect(footprintsOverlap(oval(0, 0, 60, 35), oval(40, 10, 60, 35))).toBe(true);
+  });
+
+  it('rectangles behave exactly as before', () => {
+    expect(footprintsOverlap(box(0, 0, 25, 25), box(20, 0, 25, 25))).toBe(true);
+    expect(footprintsOverlap(box(0, 0, 25, 25), box(25, 0, 25, 25))).toBe(false);
   });
 });
