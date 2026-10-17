@@ -56,6 +56,24 @@ function ConfirmDeleteDialog() {
   const sourceName = useAppStore((s) => (s.view.confirmRemoveSource ? (s.sources[s.view.confirmRemoveSource]?.fileName ?? 'this base') : ''));
   const pieceCount = useAppStore((s) => (s.view.confirmRemoveSource ? Object.values(s.project.pieces).filter((p) => p.sourceId === s.view.confirmRemoveSource && p.parentId !== null).length : 0));
   const confirmSource = useAppStore((s) => s.confirmRemoveSource);
+  const turn = useAppStore((s) => s.view.confirmOrientation ?? null);
+  const turnName = useAppStore((s) => (s.view.confirmOrientation ? (s.sources[s.view.confirmOrientation.sourceId]?.fileName ?? 'this scene') : ''));
+  const turnCount = useAppStore((s) => (s.view.confirmOrientation ? Object.values(s.project.pieces).filter((p) => p.sourceId === s.view.confirmOrientation!.sourceId && p.parentId !== null).length : 0));
+  const confirmTurn = useAppStore((s) => s.confirmSourceOrientation);
+  if (turn) {
+    return (
+      <div className="modal-backdrop" onClick={cancel}>
+        <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+          <h3>Turn “{turnName.replace(/\.stl$/i, '')}” the other way up?</h3>
+          <p>{`The scene gets a new footprint, so the ${turnCount} item${turnCount === 1 ? '' : 's'} placed on it ${turnCount === 1 ? 'is' : 'are'} removed. The STL file on disk is not touched.`}</p>
+          <div className="modal-actions">
+            <button type="button" onClick={cancel} autoFocus>Keep it as it is</button>
+            <button type="button" className="danger" onClick={() => { void confirmTurn(); }}>Turn it and clear</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (sourceId) {
     return (
       <div className="modal-backdrop" onClick={cancel}>

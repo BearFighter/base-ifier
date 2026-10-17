@@ -4,6 +4,7 @@
  */
 import type { Bounds3, EdgeProfile, EdgeTreatment, Shape, Vec2 } from '@/kernel/types';
 import type { StudioDocument, StudioProp } from '@/kernel/studio/document';
+import type { SourceOrientation, UpAxis } from '@/kernel/source/orient';
 
 export interface OutlineTransfer {
   bottom: Vec2[];
@@ -29,6 +30,8 @@ export interface SourceSummary {
   };
   warnings: string[];
   timings: Record<string, number>;
+  /** which way up the file was read: what was applied, what the detection found, and whether it was automatic */
+  orientation: SourceOrientation;
 }
 
 /** One node of the ancestor chain, root first. The root node has xy [0,0] and the source's nominal shape. */
@@ -287,7 +290,7 @@ export interface StudioPreviewTransfer {
 
 export interface KernelApi {
   /** `onProgress` must be a separate argument (Comlink proxies only top-level function arguments). */
-  loadSource(id: string, name: string, buffer: ArrayBuffer, opts?: { nominal?: Shape }, onProgress?: ProgressCallback): Promise<SourceSummary>;
+  loadSource(id: string, name: string, buffer: ArrayBuffer, opts?: { nominal?: Shape; orientation?: UpAxis | 'auto' }, onProgress?: ProgressCallback): Promise<SourceSummary>;
   unloadSource(id: string): Promise<void>;
   computePiece(req: ComputeRequest): Promise<PieceGeometryTransfer>;
   /** terrain under a base: thickness and heights over its footprint (cheap; used before Base-ify to offer plug cuts) */

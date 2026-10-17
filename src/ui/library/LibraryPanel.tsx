@@ -1,6 +1,6 @@
 /** Left-column panel: load STL sources (files or a folder) and list them. */
 import React, { useRef, useState } from 'react';
-import { Details } from '@/ui/common/Field';
+import { Details, Field } from '@/ui/common/Field';
 import { edgeSlopeMm, formatDuration, formatTriangleCount, formatWD, shapeNoun } from '@/ui/common/copy';
 import { GettingStarted } from '@/ui/help/GettingStarted';
 import { useAppStore } from '@/state/project';
@@ -8,6 +8,7 @@ import { formatMm } from '@/ui/util/format';
 import { SampleLibrary } from './SampleLibrary';
 import { StudioEntry } from '@/ui/studio/StudioEntry';
 import { DefaultEdges } from './DefaultEdges';
+import type { UpAxis } from '@/kernel/source/orient';
 
 // The File System Access API's directory picker isn't in TS's bundled DOM
 // lib yet; declare just enough of it to use `window.showDirectoryPicker`.
@@ -25,6 +26,48 @@ declare global {
   interface Window {
     showDirectoryPicker?: () => Promise<FsDirHandle>;
   }
+}
+
+/** "Which way is up?" choices, in the order the select lists them. */
+const UP_CHOICES: { id: UpAxis | 'auto'; label: string }[] = [
+  { id: 'auto', label: 'Auto (recommended)' },
+  { id: 'z+', label: 'Z up (as saved)' },
+  { id: 'y+', label: 'Y up' },
+  { id: 'x+', label: 'X up' },
+  { id: 'z-', label: 'Z down' },
+  { id: 'y-', label: 'Y down' },
+  { id: 'x-', label: 'X down' },
+];
+
+/** What the automatic turn did, in a few plain words. */
+function turnedNote(up: UpAxis): string {
+  if (up === 'z-') return 'Turned over: the file was saved upside down.';
+  return `Stood up: the file was saved ${up[0].toUpperCase()} ${up[1] === '+' ? 'up' : 'down'}.`;
+}
+
+/** The Scene card's "Which way is up?" field (file scenes only; a Base Studio scene is always built Z up). */
+function OrientationField({ id }: { id: string }) {
+  const setSourceOrientation = useAppStore((s) => s.setSourceOrientation);
+  const o = useAppStore((s) => s.sources[id]?.orientation ?? s.sources[id]?.summary?.orientation);
+  const value: UpAxis | 'auto' = useAppStore((s) => s.project.sources[id]?.orientation ?? 'auto');
+  const loading = useAppStore((s) => s.sources[id]?.status === 'loading');
+  return (
+    <>
+      <Field label="Which way is up?" help="Auto stands the scene on its biggest flat face. If it still lies on its edge, pick the axis that should point up.">
+        <select
+          value={value}
+          disabled={loading}
+          onChange={(e) => { void setSourceOrientation(id, e.target.value as UpAxis | 'auto'); }}
+        >
+          {UP_CHOICES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+        </select>
+      </Field>
+      {!loading && o && o.auto && o.applied !== 'z+' && <div className="source-note">{turnedNote(o.applied)}</div>}
+      {!loading && o && o.auto && o.applied === 'z+' && o.detected !== 'z+' && (
+        <div className="source-note source-warning">This scene may be {o.detected === 'z-' ? 'upside down' : 'lying on its side'}. If it looks wrong, pick the axis that should point up.</div>
+      )}
+    </>
+  );
 }
 
 interface FolderEntry {
@@ -245,6 +288,11 @@ export function LibraryPanel() {
                     )}
                   </Details>
                 </div>
+              )}
+
+              {/* outside the ready block so it stays on the card (disabled) while the file is read again */}
+              {project && project.origin !== 'studio' && src.origin !== 'studio' && src.file && (src.status === 'ready' || src.status === 'loading') && (
+                <OrientationField id={id} />
               )}
             </div>
           );

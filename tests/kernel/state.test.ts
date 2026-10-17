@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { chainFor, magnetRequestFor, sizingRequestFor, trayRequestFor, traySettingsFor, undersideRequestFor } from '@/state/chain';
 import { trayPiecesFor, trayShapeFor } from '@/state/derive';
 import { placementError, usesFrames } from '@/model/rules';
@@ -6,7 +6,42 @@ import { formatMm } from '@/ui/util/format';
 import { addPiece, leaves, pieceSize } from '@/model/tree';
 import { defaultEdges, defaultExportSettings, defaultMagnetSettings, newProject } from '@/model/defaults';
 import type { Piece, Project } from '@/model/types';
-import type { SourceSummary } from '@/worker/api';
+import type { PieceGeometryTransfer, SourceSummary } from '@/worker/api';
+import type { Shape } from '@/kernel/types';
+import { readStl } from '@/kernel/stl/read';
+import { writeBinaryStl } from '@/kernel/stl/write';
+import { orientSoup, type UpAxis } from '@/kernel/source/orient';
+import { prepareSource } from '@/kernel/source/prepareSource';
+import { boxSoup } from '../fixtures/synthetic';
+
+/**
+ * The geometry worker, stubbed with the same kernel calls its loadSource makes
+ * (read, turn, prepare), so the store sees real summaries. Nothing else in this
+ * file talks to the worker.
+ */
+const { loadCalls } = vi.hoisted(() => ({ loadCalls: [] as { id: string; orientation?: UpAxis | 'auto' }[] }));
+vi.mock('@/worker/client', () => ({
+  withTimeout: <T,>(p: Promise<T>) => p,
+  resetKernel: () => {},
+  progressProxy: (c: unknown) => c,
+  kernelGeneration: () => 1,
+  kernel: () => ({
+    loadSource: async (id: string, name: string, buffer: ArrayBuffer, opts?: { nominal?: Shape; orientation?: UpAxis | 'auto' }): Promise<SourceSummary> => {
+      loadCalls.push({ id, orientation: opts?.orientation });
+      const oriented = orientSoup(readStl(buffer), opts?.orientation ?? 'auto', true);
+      const p = prepareSource(oriented.soup, name, { nominal: opts?.nominal });
+      return {
+        id, name, nominal: p.nominal, measuredScale: p.measuredScale, mode: p.mode,
+        outline: { bottom: p.outline.bottom, top: p.outline.top, plateTop: p.outline.plateTop, topScale: p.outline.topScale },
+        stats: { tris: p.stats.tris, bodyTris: p.stats.bodyTris, sculptTris: p.stats.sculptTris, components: p.stats.components, nonManifoldEdges: p.stats.nonManifoldEdges, boundaryEdges: p.stats.boundaryEdges, bounds: p.stats.bounds },
+        warnings: [...oriented.warnings, ...p.warnings], timings: p.timings, orientation: oriented.orientation,
+      };
+    },
+    autoMagnets: async () => [],
+    computePiece: async (req: { chain: { id: string }[] }) => ({ pieceId: req.chain[req.chain.length - 1].id, hasSculpt: false }) as unknown as PieceGeometryTransfer,
+    unloadSource: async () => {},
+  }),
+}));
 
 function makePiece(overrides: Partial<Piece>): Piece {
   const shape = overrides.shape ?? { kind: 'rect' as const, w: 10, d: 10 };
@@ -71,6 +106,7 @@ function fakeSourceSummary(overrides: Partial<SourceSummary> = {}): SourceSummar
     },
     warnings: [],
     timings: {},
+    orientation: { applied: 'z+', detected: 'z+', auto: true, confident: false },
     ...overrides,
   };
 }
@@ -396,5 +432,92 @@ describe('export list with a tray', () => {
     const tray = p.pieces.tr1;
     const size = pieceSize(tray);
     expect(`scene_${tray.name}_${formatMm(size.w)}x${formatMm(size.d)}.stl`).toBe('scene_Regiment tray_131x56.stl');
+  });
+});
+
+describe('which way is up: the store', () => {
+  /** a 40 x 40 x 3 slab saved standing on its edge (its height along Y), as a binary STL */
+  function edgeFile(): File {
+    const box = boxSoup(40, 40, 3);
+    const P = box.positions, out = new Float32Array(box.triCount * 9);
+    for (let i = 0; i < out.length; i += 3) { out[i] = P[i]; out[i + 1] = -P[i + 2]; out[i + 2] = P[i + 1]; }
+    return new File([writeBinaryStl([{ positions: out, triCount: box.triCount }])], 'edge_40mm_40mm.stl');
+  }
+  /** height as read from the file, mm (the summary's bounds are in labelled-size mm: divided by the measured scale) */
+  const height = (s: SourceSummary) => (s.stats.bounds.max[2] - s.stats.bounds.min[2]) * s.measuredScale;
+
+  it('stands a file up on import, then keeps its id and root while the user turns it', async () => {
+    const { useAppStore } = await import('@/state/project');
+    const st = () => useAppStore.getState();
+    const id = (await st().loadSourceFile(edgeFile()))!;
+    expect(id).toBeTruthy();
+    expect(loadCalls.at(-1)).toEqual({ id, orientation: 'auto' });
+    let live = st().sources[id];
+    expect(live.status).toBe('ready');
+    expect(live.orientation?.applied[0]).toBe('y');
+    expect(live.orientation?.auto).toBe(true);
+    expect(height(live.summary!)).toBeCloseTo(3, 4);
+    expect(live.summary!.nominal).toMatchObject({ w: 40, d: 40 });
+    expect(live.summary!.warnings[0]).toMatch(/stood up/);
+    const rootId = st().project.sources[id].rootPieceId;
+    expect(st().project.sources[id].orientation).toBeUndefined();
+
+    // as saved: the slab stands 40 mm tall, same id, same root, the choice recorded
+    await st().setSourceOrientation(id, 'z+');
+    live = st().sources[id];
+    expect(loadCalls.at(-1)).toEqual({ id, orientation: 'z+' });
+    expect(st().project.sources[id].orientation).toBe('z+');
+    expect(st().project.sources[id].rootPieceId).toBe(rootId);
+    expect(st().project.pieces[rootId]).toBeDefined();
+    expect(live.orientation).toMatchObject({ applied: 'z+', auto: false });
+    expect(height(live.summary!)).toBeCloseTo(40, 4);
+    expect(st().project.pieces[rootId].shape).toMatchObject({ w: 40 });
+
+    // back to automatic: the choice is cleared and it stands on its face again
+    await st().setSourceOrientation(id, 'auto');
+    live = st().sources[id];
+    expect(st().project.sources[id].orientation).toBeUndefined();
+    expect('orientation' in st().project.sources[id]).toBe(false);
+    expect(st().project.sources[id].rootPieceId).toBe(rootId);
+    expect(live.orientation?.auto).toBe(true);
+    expect(height(live.summary!)).toBeCloseTo(3, 4);
+  });
+
+  it('asks before clearing what is placed on the scene, and does nothing when the user says no', async () => {
+    const { useAppStore } = await import('@/state/project');
+    const st = () => useAppStore.getState();
+    st().setMode('single');
+    const id = (await st().loadSourceFile(edgeFile()))!;
+    const rootId = st().project.sources[id].rootPieceId;
+    const baseId = st().addPiece(rootId, { shape: { kind: 'rect', w: 20, d: 20 }, xy: [0, 0], rotDeg: 0 });
+    expect(baseId).toBeTruthy();
+    const calls = loadCalls.length;
+
+    await st().setSourceOrientation(id, 'x+');
+    expect(st().view.confirmOrientation).toEqual({ sourceId: id, orientation: 'x+' });
+    expect(loadCalls.length).toBe(calls);
+    st().cancelDelete();
+    expect(st().view.confirmOrientation).toBeNull();
+    expect(st().project.pieces[baseId!]).toBeDefined();
+    expect(st().project.sources[id].orientation).toBeUndefined();
+
+    await st().setSourceOrientation(id, 'x+');
+    await st().confirmSourceOrientation();
+    expect(st().project.pieces[baseId!]).toBeUndefined();
+    expect(st().project.pieces[rootId].children).toEqual([]);
+    expect(st().project.sources[id].orientation).toBe('x+');
+    expect(st().sources[id].orientation?.applied).toBe('x+');
+  });
+
+  it('records a choice that turns the file the way it already is without reading it again', async () => {
+    const { useAppStore } = await import('@/state/project');
+    const st = () => useAppStore.getState();
+    const id = (await st().loadSourceFile(edgeFile()))!;
+    const applied = st().sources[id].orientation!.applied;
+    const calls = loadCalls.length;
+    await st().setSourceOrientation(id, applied);
+    expect(loadCalls.length).toBe(calls);
+    expect(st().project.sources[id].orientation).toBe(applied);
+    expect(st().sources[id].orientation?.auto).toBe(false);
   });
 });

@@ -19,6 +19,7 @@ import type { Soup, Vec2 } from '@/kernel/types';
 import { tightSoup } from '@/kernel/types';
 import { readStl } from '@/kernel/stl/read';
 import { prepareSource, type PreparedSource } from '@/kernel/source/prepareSource';
+import { orientSoup, type SourceOrientation } from '@/kernel/source/orient';
 import { computePiece, meshToSoup, rootPieceParams, sourceFrame, type ParentFrame, type PieceResult, type TrayParams } from '@/kernel/pipeline/computePiece';
 import { magnetSlotSpecs } from '@/kernel/body/magnetSlots';
 import { materialThickness, socketFor } from '@/kernel/pipeline/plug';
@@ -170,8 +171,11 @@ function compute(req: ComputeRequest): PieceResult {
   return result;
 }
 
+/** Studio bakes are built Z up, so they are never turned. */
+const AS_BUILT: SourceOrientation = { applied: 'z+', detected: 'z+', auto: false, confident: false };
+
 /** The renderer-side description of a prepared source (also used for studio bakes). */
-function summarize(id: string, name: string, prepared: PreparedSource): SourceSummary {
+function summarize(id: string, name: string, prepared: PreparedSource, orientation: SourceOrientation = AS_BUILT): SourceSummary {
     const summary: SourceSummary = {
       id,
       name,
@@ -195,6 +199,7 @@ function summarize(id: string, name: string, prepared: PreparedSource): SourceSu
       },
       warnings: prepared.warnings,
       timings: prepared.timings,
+      orientation,
     };
     return summary;
 }
@@ -231,10 +236,16 @@ const api: KernelApi = {
     const t0 = performance.now();
     const raw = readStl(buffer);
     const tRead = performance.now() - t0;
-    const prepared = prepareSource(raw, name, { nominal: opts?.nominal, onProgress: onProgress ? (stage, fraction) => { void onProgress(stage, fraction); } : undefined });
+    // stand the file on its flat bottom (the raw soup is ours, so it is turned in place)
+    const t1 = performance.now();
+    const oriented = orientSoup(raw, opts?.orientation ?? 'auto', true);
+    const tOrient = performance.now() - t1;
+    const prepared = prepareSource(oriented.soup, name, { nominal: opts?.nominal, onProgress: onProgress ? (stage, fraction) => { void onProgress(stage, fraction); } : undefined });
+    prepared.warnings.unshift(...oriented.warnings);
     prepared.timings.read = tRead;
+    prepared.timings.orient = tOrient;
     sources.set(id, { prepared, cache: new Map(), full: new Map(), stamp: { arr: new Uint32Array(prepared.sculpt.triCount), id: 0 } });
-    return summarize(id, name, prepared);
+    return summarize(id, name, prepared, oriented.orientation);
   },
 
   async registerStudioAssets(assets) {

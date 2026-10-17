@@ -21,6 +21,7 @@ import { kernel, progressProxy, resetKernel, withTimeout } from '@/worker/client
 import { PROFILE_GW } from '@/kernel/types';
 import { largestEmptyRect } from '@/kernel/geom2d/maxEmptyRect';
 import { USABLE_INSET } from '@/kernel/pipeline/computePiece';
+import type { UpAxis } from '@/kernel/source/orient';
 
 /** Worker calls slower than this are treated as hung. */
 const COMPUTE_TIMEOUT_MS = 120_000;
@@ -130,13 +131,69 @@ export const useAppStore = create<AppStore>()(
       return next;
     }
 
+    /**
+     * Read a file-origin scene again, turned so `orientation` points up, under the SAME
+     * id: the root piece is kept and its shape follows the new footprint. Whatever was
+     * placed on the scene must be gone already (it was placed on the old footprint),
+     * except when a saved project is re-matched, whose layout was made for this turn.
+     */
+    async function reloadOriented(id: string, orientation: UpAxis | 'auto'): Promise<boolean> {
+      const file = get().sources[id]?.file;
+      if (!file) {
+        set((s) => { s.lastError = 'Add the file again to change its orientation.'; });
+        return false;
+      }
+      set((s) => {
+        const x = s.sources[id];
+        if (x) { x.status = 'loading'; x.error = undefined; x.progress = { stage: 'read', fraction: 0 }; }
+      });
+      try {
+        const buffer = await file.arrayBuffer();
+        const summary = await withTimeout(
+          kernel().loadSource(
+            id,
+            file.name,
+            Comlink.transfer(buffer, [buffer]),
+            { orientation },
+            progressProxy((stage, fraction) => {
+              set((s) => {
+                const src = s.sources[id];
+                if (src) src.progress = { stage, fraction };
+              });
+            }),
+          ),
+          LOAD_TIMEOUT_MS,
+          `Turning ${file.name}`,
+        );
+        set((s) => {
+          const src = s.project.sources[id];
+          if (src) {
+            if (orientation === 'auto') delete src.orientation;
+            else src.orientation = orientation;
+          }
+        });
+        await get().registerPreparedSource(id, file.name, summary, { origin: 'file', file });
+        return true;
+      } catch (err) {
+        const message = errorMessage(err);
+        set((s) => {
+          const x = s.sources[id];
+          // the geometry engine only replaces a scene once the new one is ready, so the old one is still there
+          if (x) { x.status = x.summary ? 'ready' : 'error'; x.error = x.summary ? undefined : message; x.progress = undefined; }
+          s.lastError = message;
+        });
+        if (/was cancelled$/.test(message)) void get().restartKernel(message);
+        return false;
+      }
+    }
+
     return {
       // ---------------------------------------------------------------- state
       project: newProject(),
       sources: {},
       geometry: {},
       terrain: {},
-      view: { mode: 'top', showSculpt: true, tool: 'layout', drafts: [], activeDraftId: null, showHelp: true, confirmDelete: null, confirmRemoveSource: null, leftTab: 'base' },
+      view: { mode: 'top', showSculpt: true, tool: 'layout', drafts: [], activeDraftId: null, showHelp: true, confirmDelete: null, confirmRemoveSource: null, confirmOrientation: null, leftTab: 'base' },
       busy: 0,
       baseified: false,
       previewIds: [],
@@ -155,7 +212,7 @@ export const useAppStore = create<AppStore>()(
               id,
               file.name,
               Comlink.transfer(buffer, [buffer]),
-              {},
+              { orientation: 'auto' },
               progressProxy((stage, fraction) => {
                 set((s) => {
                   const src = s.sources[id];
@@ -202,8 +259,10 @@ export const useAppStore = create<AppStore>()(
         const rootId = existing?.rootPieceId ?? newId('pc');
         const fileKey = opts.file ? { hash: `${opts.file.name}:${opts.file.size}`, size: opts.file.size } : { hash: `${opts.origin}:${opts.studioId ?? id}:${summary.stats.tris}`, size: 0 };
         set((s) => {
-          s.sources[id] = { status: 'ready', fileName: name, fileSize: opts.file?.size ?? 0, summary, file: opts.file, origin: opts.origin, studioId: opts.studioId };
+          s.sources[id] = { status: 'ready', fileName: name, fileSize: opts.file?.size ?? 0, summary, file: opts.file, origin: opts.origin, studioId: opts.studioId, orientation: summary.orientation };
           const source: Source = { id, name, fileKey, nominal: summary.nominal, normalization, stats, rootPieceId: rootId, origin: opts.origin, studioId: opts.studioId };
+          // the user's own "which way is up" choice survives a re-read (a bake is always Z up)
+          if (existing?.orientation && opts.origin !== 'studio') source.orientation = existing.orientation;
           s.project.sources[id] = source;
           const root = s.project.pieces[rootId];
           if (root) {
@@ -267,6 +326,51 @@ export const useAppStore = create<AppStore>()(
         void kernel().unloadSource(id);
       },
 
+      async setSourceOrientation(sourceId, orientation) {
+        const state = get();
+        const source = state.project.sources[sourceId];
+        const live = state.sources[sourceId];
+        // a Base Studio bake is built Z up: nothing to turn
+        if (!source || !live || (source.origin ?? live.origin) === 'studio' || live.status === 'loading') return;
+        if ((source.orientation ?? 'auto') === orientation && live.status === 'ready') return;
+        const o = live.summary?.orientation;
+        if (o && live.status === 'ready') {
+          // the detection always looks at the file as saved, so this is what 'auto' would do
+          const wanted = orientation === 'auto' ? (o.confident ? o.detected : 'z+') : orientation;
+          if (wanted === o.applied) {
+            // the same turn: only the choice is recorded, nothing is re-read or removed
+            set((s) => {
+              const src = s.project.sources[sourceId];
+              if (src) { if (orientation === 'auto') delete src.orientation; else src.orientation = orientation; }
+              const x = s.sources[sourceId];
+              if (x?.summary) { x.summary.orientation = { ...x.summary.orientation, auto: orientation === 'auto' }; x.orientation = x.summary.orientation; }
+            });
+            return;
+          }
+        }
+        if (!live.file) {
+          set((s) => { s.lastError = 'Add the file again to change its orientation.'; });
+          return;
+        }
+        const root = state.project.pieces[source.rootPieceId];
+        if (root && root.children.length > 0) {
+          // what is placed was placed on the old footprint: ask before clearing it (never window.confirm)
+          set((s) => { s.view.confirmOrientation = { sourceId, orientation }; });
+          return;
+        }
+        await reloadOriented(sourceId, orientation);
+      },
+
+      async confirmSourceOrientation() {
+        const req = get().view.confirmOrientation;
+        set((s) => { s.view.confirmOrientation = null; });
+        if (!req) return;
+        const source = get().project.sources[req.sourceId];
+        const root = source ? get().project.pieces[source.rootPieceId] : undefined;
+        if (root) for (const cid of root.children.slice()) get().removePiece(cid);
+        await reloadOriented(req.sourceId, req.orientation);
+      },
+
       // ---------------------------------------------------------------- pieces
       selectPiece(id) {
         const prev = get().project.selectedId;
@@ -299,7 +403,7 @@ export const useAppStore = create<AppStore>()(
       },
 
       cancelDelete() {
-        set((s) => { s.view.confirmDelete = null; s.view.confirmRemoveSource = null; });
+        set((s) => { s.view.confirmDelete = null; s.view.confirmRemoveSource = null; s.view.confirmOrientation = null; });
       },
 
       requestRemoveSource(id) {
@@ -331,8 +435,10 @@ export const useAppStore = create<AppStore>()(
           try {
             set((s) => { const x = s.sources[id]; if (x) { x.status = 'loading'; x.error = undefined; } });
             const buffer = await file.arrayBuffer();
-            const summary = await withTimeout(kernel().loadSource(id, file.name, Comlink.transfer(buffer, [buffer]), {}), LOAD_TIMEOUT_MS, `Reloading ${file.name}`);
-            set((s) => { const x = s.sources[id]; if (x) { x.status = 'ready'; x.summary = summary; x.progress = undefined; } });
+            // read it the same way up as before (the user's choice, or the automatic one)
+            const orientation = get().project.sources[id]?.orientation ?? 'auto';
+            const summary = await withTimeout(kernel().loadSource(id, file.name, Comlink.transfer(buffer, [buffer]), { orientation }), LOAD_TIMEOUT_MS, `Reloading ${file.name}`);
+            set((s) => { const x = s.sources[id]; if (x) { x.status = 'ready'; x.summary = summary; x.orientation = summary.orientation; x.progress = undefined; } });
           } catch (err) {
             const message = errorMessage(err);
             set((s) => { const x = s.sources[id]; if (x) { x.status = 'error'; x.error = message; } });
@@ -791,7 +897,7 @@ export const useAppStore = create<AppStore>()(
         set((s) => {
           s.project = { ...project, export: { ...defaultExportSettings(), ...project.export, presupport: { ...defaultExportSettings().presupport, ...(project.export?.presupport ?? {}) } }, underside: withoutMark({ ...defaultUndersideSettings(), ...(project.underside ?? {}) }), plug: { ...defaultPlugSettings(), ...(project.plug ?? {}) }, tray: { ...defaultTraySettings(), ...(project.tray ?? {}) }, studio: normalizeStudioLibrary(project.studio) };
           s.geometry = {};
-          s.view = { mode: 'top', showSculpt: true, tool: 'layout', drafts: [], activeDraftId: null, showHelp: s.view.showHelp, confirmDelete: null, confirmRemoveSource: null, leftTab: 'bases' };
+          s.view = { mode: 'top', showSculpt: true, tool: 'layout', drafts: [], activeDraftId: null, showHelp: s.view.showHelp, confirmDelete: null, confirmRemoveSource: null, confirmOrientation: null, leftTab: 'bases' };
           if (!s.project.mode) s.project.mode = 'multibase';
           s.baseified = false;
           s.previewIds = [];
@@ -814,6 +920,17 @@ export const useAppStore = create<AppStore>()(
           }
           s.sources = nextSources;
         });
+        // a scene kept from this session must be the same way up as the saved layout expects
+        for (const src of Object.values(project.sources)) {
+          if (src.origin === 'studio') continue;
+          const live = get().sources[src.id];
+          const o = live?.summary?.orientation;
+          if (!live || live.status !== 'ready' || !o || !live.file) continue;
+          const wanted = src.orientation ?? 'auto';
+          // the detection always looks at the file as saved, so this is the turn the layout was made on
+          const turn = wanted === 'auto' ? (o.confident ? o.detected : 'z+') : wanted;
+          if (turn !== o.applied) await reloadOriented(src.id, wanted);
+        }
       },
 
       clearError() {

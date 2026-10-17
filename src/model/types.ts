@@ -6,6 +6,7 @@ import type { StudioDocument } from '@/kernel/studio/document';
  */
 
 import type { Shape, EdgeTreatment, EdgeProfile, Vec2 } from '@/kernel/types';
+import type { UpAxis } from '@/kernel/source/orient';
 
 export type PrinterProfile = 'resin' | 'fdm' | 'custom';
 
@@ -90,6 +91,8 @@ export interface Source {
   /** where the scene came from: an STL file (default) or a Base Studio bake */
   origin?: 'file' | 'studio';
   studioId?: string;
+  /** the user's own "which way is up" choice for the file; absent = automatic (stand it on its biggest flat face) */
+  orientation?: UpAxis;
 }
 
 /** What the user is making. Decides what can be placed on the big base and how deep it nests. */

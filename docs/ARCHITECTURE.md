@@ -15,6 +15,14 @@ the repository) but works on any base whose file name encodes its size.
     bottom, and the **sculpt** shell on top), normalises to nominal mm (OPR files
     are scaled 0.9947), trims the sculpt at the plate top, bins it in 2 mm XY
     cells. Falls back to a "generic" mode for single-shell files.
+  - `source/orient.ts` — which way is up, run on every import before
+    `prepareSource`: each of the six axis directions is scored by the outline
+    area of the flat face at that end of the bounding box (its biggest flat
+    face becomes the bottom; outline, not triangle area, because a hollow base
+    stands on a narrow brim). It turns the file only when that beats the file's
+    own bottom 2x and the result is plate-like, so a correctly saved file or a
+    tall prop is never turned. "Which way is up?" on the Scene tab overrides
+    it; the choice is saved per source (`Source.orientation`, absent = auto).
   - `pipeline/computePiece.ts` — a piece = clipped body outlines (2D convex
     clipping, bevel reproduced per new edge) + an analytic watertight body +
     the sculpt cut by a vertical convex prism (`sculpt/cutPrism.ts`). Outlines

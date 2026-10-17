@@ -6,6 +6,7 @@ import type { StudioDocument } from '@/kernel/studio/document';
 import type { EdgeProfile, Shape, Vec2 } from '@/kernel/types';
 import type { MagnetSettings, ExportSettings, MagnetSlot, Piece, PieceRole, Project, WorkMode, UndersideSettings, PlugSettings, TraySettings } from '@/model/types';
 import type { PieceGeometryTransfer, SourceSummary, ColumnInfo } from '@/worker/api';
+import type { UpAxis } from '@/kernel/source/orient';
 
 export type ViewMode = 'top' | 'orbit' | 'underside';
 /** 'layout' = place pieces on the selected base/piece (default); 'magnets' = edit magnet slots. */
@@ -24,6 +25,8 @@ export interface SourceState {
   /** where the scene came from: an STL file (default) or a Base Studio bake */
   origin?: 'file' | 'studio';
   studioId?: string;
+  /** which way up the geometry engine read the file (copied from the summary) */
+  orientation?: SourceSummary['orientation'];
 }
 
 export interface GeometryState {
@@ -58,6 +61,8 @@ export interface ViewState {
   surface?: 'cutter' | 'studio';
   /** base (source) awaiting removal confirmation */
   confirmRemoveSource: string | null;
+  /** a "which way is up" change waiting for the user to agree to clearing what is placed on that scene */
+  confirmOrientation?: { sourceId: string; orientation: UpAxis | 'auto' } | null;
   /** which left-hand tab is open */
   leftTab: 'base' | 'bases' | 'magnets' | 'export';
 }
@@ -83,6 +88,14 @@ export interface AppActions {
   // sources
   loadSourceFile(file: File): Promise<string | null>;
   removeSource(id: string): void;
+  /**
+   * Read a file-origin scene again turned so `orientation` points up ('auto' = stand it on its
+   * biggest flat face), keeping its id and root piece. When bases or frames are placed on it,
+   * asks first (`view.confirmOrientation`), because they were placed on the old footprint.
+   */
+  setSourceOrientation(sourceId: string, orientation: UpAxis | 'auto'): Promise<void>;
+  /** the user agreed: remove everything placed on that scene and turn it */
+  confirmSourceOrientation(): Promise<void>;
 
   // pieces
   selectPiece(id: string | null): void;
